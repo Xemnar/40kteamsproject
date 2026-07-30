@@ -1,0 +1,1488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>8-Man Matchup Console</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap');
+
+:root{
+  --bg:#10131a;
+  --bg-grid: rgba(255,255,255,0.02);
+  --panel:#1a1e29;
+  --panel-alt:#20242f;
+  --line:#2b3040;
+  --line-soft:#232734;
+  --text:#e7e5de;
+  --text-dim:#8b93a6;
+  --teamA:#4a9bd6;
+  --teamA-soft:#1c3348;
+  --teamA-line:#2c5273;
+  --teamB:#d24a3d;
+  --teamB-soft:#3a201d;
+  --teamB-line:#6b332c;
+  --gold:#c9a227;
+  --gold-soft:#332c16;
+  --good:#4c9f70;
+  --warn:#e0883d;
+  --radius:4px;
+  --font-display:'Oswald','Arial Narrow',sans-serif;
+  --font-body:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --font-mono:'JetBrains Mono','SFMono-Regular',Consolas,monospace;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:
+    repeating-linear-gradient(0deg, var(--bg-grid) 0px, var(--bg-grid) 1px, transparent 1px, transparent 28px),
+    repeating-linear-gradient(90deg, var(--bg-grid) 0px, var(--bg-grid) 1px, transparent 1px, transparent 28px),
+    var(--bg);
+  color:var(--text);
+  font-family:var(--font-body);
+  font-size:15px;
+  line-height:1.45;
+  min-height:100vh;
+}
+#app{max-width:980px;margin:0 auto;padding:18px 16px 60px;}
+a{color:var(--teamA);}
+h1,h2,h3{font-family:var(--font-display);font-weight:600;letter-spacing:.02em;margin:0 0 4px;}
+.eyebrow{
+  font-family:var(--font-mono);
+  font-size:11px;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  color:var(--gold);
+}
+.dim{color:var(--text-dim);}
+.mono{font-family:var(--font-mono);}
+button{font-family:var(--font-body);cursor:pointer;}
+button:focus-visible, input:focus-visible, select:focus-visible, label:focus-within{
+  outline:2px solid var(--gold);
+  outline-offset:2px;
+}
+input[type=text], input[type=number], select{
+  background:var(--panel-alt);
+  border:1px solid var(--line);
+  color:var(--text);
+  border-radius:var(--radius);
+  padding:8px 10px;
+  font-family:var(--font-body);
+  font-size:14px;
+  width:100%;
+}
+input[type=number]{font-family:var(--font-mono);}
+label{display:block;}
+
+/* ---------- buttons ---------- */
+.btn{
+  background:var(--panel-alt);
+  border:1px solid var(--line);
+  color:var(--text);
+  padding:10px 16px;
+  border-radius:var(--radius);
+  font-size:14px;
+  font-weight:500;
+  transition:border-color .15s, background .15s;
+}
+.btn:hover{border-color:var(--gold);}
+.btn:disabled{opacity:.35;cursor:not-allowed;}
+.btn:disabled:hover{border-color:var(--line);}
+.btn-primary{background:var(--gold-soft);border-color:var(--gold);color:#f2e7c2;}
+.btn-primary:hover{background:var(--gold);color:#181307;}
+.btn-ghost{background:transparent;border-color:var(--line-soft);color:var(--text-dim);padding:6px 10px;font-size:12px;}
+.btn-ghost:hover{color:var(--text);}
+.btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;}
+
+/* ---------- header ---------- */
+.hud-header{
+  display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;
+  border-bottom:1px solid var(--line);
+  padding-bottom:14px;margin-bottom:20px;
+}
+.hud-brand{font-family:var(--font-display);font-size:18px;letter-spacing:.06em;}
+.hud-brand .bracket{color:var(--gold);}
+.hud-meta{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.hud-badge{
+  font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;
+  border:1px solid var(--line);border-radius:var(--radius);
+  padding:4px 9px;color:var(--text-dim);
+}
+.sync-dot{width:7px;height:7px;border-radius:50%;background:var(--good);display:inline-block;margin-right:6px;}
+.sync-dot.busy{background:var(--warn);}
+.sync-dot.err{background:var(--teamB);}
+
+/* ---------- panels ---------- */
+.panel{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:18px;
+  margin-bottom:18px;
+}
+.panel-title{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;}
+
+/* ---------- setup form ---------- */
+.field{margin-bottom:12px;}
+.field-label{font-size:12px;color:var(--text-dim);margin-bottom:5px;font-weight:500;}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+@media(max-width:720px){.two-col{grid-template-columns:1fr;}}
+.roster-grid{display:flex;flex-direction:column;gap:6px;}
+.roster-row{display:flex;gap:6px;flex-wrap:wrap;}
+.roster-row input.player-name{flex:1.3;min-width:90px;}
+.roster-row input.player-faction{flex:1;min-width:80px;}
+.roster-row select{flex:0 0 138px;font-size:12px;padding:8px 6px;}
+@media(max-width:520px){.roster-row select{flex:1 1 100%;}}
+.team-block{border-radius:var(--radius);padding:14px;border:1px solid var(--line);}
+.team-block.a{border-color:var(--teamA-line);background:linear-gradient(180deg, var(--teamA-soft) 0%, transparent 60px);}
+.team-block.b{border-color:var(--teamB-line);background:linear-gradient(180deg, var(--teamB-soft) 0%, transparent 60px);}
+.team-name-input{font-family:var(--font-display);font-size:16px;font-weight:600;margin-bottom:10px;}
+.table-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+@media(max-width:600px){.table-edit-grid{grid-template-columns:1fr;}}
+.table-edit-row{display:flex;align-items:center;gap:8px;}
+.table-edit-row .tnum{font-family:var(--font-mono);color:var(--gold);width:26px;flex-shrink:0;}
+.radio-row{display:flex;gap:16px;}
+.matrix-scroll{overflow-x:auto;}
+.matchup-matrix{border-collapse:collapse;font-size:12px;width:100%;min-width:480px;}
+.matchup-matrix th, .matchup-matrix td{padding:5px 6px;text-align:center;border:1px solid var(--line-soft);}
+.matchup-matrix th{font-family:var(--font-mono);font-size:9px;letter-spacing:.02em;color:var(--text-dim);font-weight:500;}
+.matchup-matrix .matrix-name{text-align:left;font-size:12px;white-space:nowrap;color:var(--text);}
+.matchup-matrix select{width:52px;padding:4px 2px;font-size:12px;background:var(--panel-alt);border:1px solid var(--line);color:var(--text);border-radius:3px;}
+.rating-badge{font-family:var(--font-mono);font-size:10px;letter-spacing:.02em;}
+.rating-badge.r1,.rating-badge.r2{color:var(--teamB);}
+.rating-badge.r3{color:var(--gold);}
+.rating-badge.r4,.rating-badge.r5{color:var(--good);}
+.radio-opt{display:flex;align-items:center;gap:6px;font-size:14px;}
+
+/* ---------- war room / draft ---------- */
+.warroom{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+@media(max-width:760px){.warroom{grid-template-columns:1fr;}}
+.side-panel{border-radius:var(--radius);border:1px solid var(--line);padding:14px;}
+.side-panel.a{border-color:var(--teamA-line);}
+.side-panel.b{border-color:var(--teamB-line);}
+.side-title{font-family:var(--font-display);font-size:15px;letter-spacing:.03em;display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+.side-title .swatch{width:10px;height:10px;border-radius:2px;}
+.a .swatch{background:var(--teamA);}
+.b .swatch{background:var(--teamB);}
+.pool-count{font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-left:auto;}
+.pool-list{display:flex;flex-direction:column;gap:6px;}
+.pool-item{
+  display:flex;align-items:center;gap:8px;
+  background:var(--panel-alt);border:1px solid var(--line-soft);border-radius:var(--radius);
+  padding:7px 9px;font-size:13px;
+}
+.pool-item input{width:auto;}
+.role-tag{
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;
+  padding:2px 6px;border-radius:2px;margin-left:auto;flex-shrink:0;
+}
+.role-tag.def{background:var(--gold-soft);color:var(--gold);border:1px solid var(--gold);}
+.role-tag.atk{background:var(--panel);color:var(--text-dim);border:1px solid var(--line);}
+
+.step-caption{margin-bottom:14px;}
+.step-caption .step-num{font-family:var(--font-mono);color:var(--gold);}
+
+/* signature: accept/refuse dossier */
+.vs-wrap{
+  position:relative;
+  border:1px solid var(--gold);
+  border-radius:var(--radius);
+  background:
+    linear-gradient(180deg, rgba(201,162,39,.05), transparent 40%),
+    var(--panel);
+  padding:20px 16px 16px;
+  margin:16px 0;
+}
+.vs-wrap::before,.vs-wrap::after{
+  content:"";position:absolute;width:16px;height:16px;
+  border-color:var(--gold);border-style:solid;
+}
+.vs-wrap::before{top:-1px;left:-1px;border-width:2px 0 0 2px;}
+.vs-wrap::after{bottom:-1px;right:-1px;border-width:0 2px 2px 0;}
+.vs-label{font-family:var(--font-mono);font-size:11px;color:var(--gold);letter-spacing:.12em;margin-bottom:10px;}
+.vs-grid{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;}
+@media(max-width:600px){.vs-grid{grid-template-columns:1fr;}}
+.vs-divider{font-family:var(--font-display);font-size:20px;color:var(--text-dim);text-align:center;}
+.vs-def{
+  font-family:var(--font-mono);font-size:13px;color:var(--text);
+  border:1px solid var(--line);border-radius:var(--radius);padding:10px;text-align:center;background:var(--panel-alt);
+}
+.atk-options{display:flex;flex-direction:column;gap:8px;}
+.atk-card{
+  border:1px solid var(--line);border-radius:var(--radius);
+  background:var(--panel-alt);padding:10px 12px;font-size:13px;
+  display:flex;justify-content:space-between;align-items:center;gap:8px;
+}
+.atk-card button{white-space:nowrap;}
+.atk-card.chosen{border-color:var(--good);background:linear-gradient(90deg, rgba(76,159,112,.12), transparent);}
+.atk-card .stamp{font-family:var(--font-mono);font-size:10px;letter-spacing:.08em;color:var(--good);border:1px solid var(--good);padding:2px 6px;border-radius:2px;}
+.atk-card.faded{opacity:.4;}
+
+/* ---------- table grid ---------- */
+.table-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+@media(max-width:760px){.table-grid{grid-template-columns:repeat(2,1fr);}}
+.table-card{
+  border:1px dashed var(--line);border-radius:var(--radius);
+  padding:10px;min-height:92px;background:var(--panel-alt);
+  display:flex;flex-direction:column;gap:6px;
+}
+.table-card.filled{border-style:solid;}
+.table-card .tid{font-family:var(--font-mono);color:var(--gold);font-size:12px;}
+.table-card .mission{font-size:11px;color:var(--text-dim);}
+.table-card .matchup{font-size:12px;margin-top:auto;}
+.table-card .matchup .p{display:block;}
+.table-card .p.a{color:var(--teamA);}
+.table-card .p.b{color:var(--teamB);}
+.table-card .empty-tag{font-family:var(--font-mono);font-size:10px;color:var(--text-dim);margin-top:auto;}
+.table-pick-btn{
+  text-align:left;width:100%;
+}
+
+/* ---------- scoring ---------- */
+.score-row{
+  display:grid;grid-template-columns:50px 1fr 55px 55px 1fr 60px;gap:10px;align-items:center;
+  padding:10px 0;border-bottom:1px solid var(--line-soft);
+}
+@media(max-width:640px){.score-row{grid-template-columns:1fr;gap:6px;}}
+.score-row .pname{font-size:13px;}
+.score-row .pname.a{color:var(--teamA);}
+.score-row .pname.b{color:var(--teamB);}
+.score-row .tlabel{font-family:var(--font-mono);font-size:11px;color:var(--gold);}
+.score-vs{font-family:var(--font-display);color:var(--text-dim);text-align:center;}
+.pts-preview{font-family:var(--font-mono);font-size:11px;color:var(--text-dim);text-align:right;}
+
+/* ---------- standings ---------- */
+.standings-row{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:9px 0;border-bottom:1px solid var(--line-soft);font-size:13px;
+}
+.standings-row:last-child{border-bottom:none;}
+.big-score{font-family:var(--font-mono);font-size:26px;}
+.score-banner{display:flex;justify-content:space-around;align-items:center;padding:14px 0;}
+.score-banner .side{text-align:center;}
+.score-banner .side.a .big-score{color:var(--teamA);}
+.score-banner .side.b .big-score{color:var(--teamB);}
+.score-banner .who{font-family:var(--font-mono);font-size:11px;color:var(--text-dim);letter-spacing:.08em;}
+.winner-strip{
+  text-align:center;font-family:var(--font-display);letter-spacing:.05em;
+  padding:8px;border-radius:var(--radius);margin-bottom:10px;
+  background:var(--gold-soft);color:var(--gold);border:1px solid var(--gold);
+}
+
+.note{font-size:12px;color:var(--text-dim);margin-top:10px;}
+.landing-card{max-width:420px;margin:60px auto 0;}
+.error-text{color:var(--teamB);font-size:12px;margin-top:6px;}
+
+@media (prefers-reduced-motion: reduce){
+  *{transition:none !important;animation:none !important;}
+}
+</style>
+</head>
+<body>
+<div id="app">Loading…</div>
+<!-- Firebase (Realtime Database) — used for persistence when this file runs outside Claude.ai -->
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<script>
+/* =========================================================
+   8-MAN MATCHUP CONSOLE — standalone / self-hosted build
+   Accept/Refuse team pairing draft for 8-a-side 40k events
+   ========================================================= */
+
+/* =========================================================
+   FIREBASE SETUP — do this once, it takes about 5 minutes
+   1. Go to https://console.firebase.google.com → "Add project"
+      (free tier — no credit card needed).
+   2. In your new project: Build → Realtime Database → Create
+      Database → start in "test mode" (or see the rules note
+      below for something a bit safer than wide open).
+   3. Project settings (gear icon) → General → "Your apps" →
+      the </> (web) icon → register an app (no Hosting needed)
+      → copy the firebaseConfig object it shows you → paste it
+      in place of the placeholder below.
+   4. Re-upload this file wherever you're hosting it.
+
+   Security rules note: with the config below, anyone who has
+   your databaseURL can read/write it — same trust model as the
+   event/team codes already have (the code is the only gate).
+   For a bit more safety, in Realtime Database → Rules, use:
+     { "rules": { ".read": true, ".write": true } }
+   which is what "test mode" gives you by default (test mode
+   just adds a 30-day expiry — switch to the rule above to
+   remove the expiry once you've confirmed everything works).
+   ========================================================= */
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+  projectId: "YOUR_PROJECT",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+
+let firebaseReady = false;
+let fbDb = null;
+try {
+  if (firebaseConfig.apiKey && firebaseConfig.apiKey !== 'YOUR_API_KEY' && typeof firebase !== 'undefined'){
+    firebase.initializeApp(firebaseConfig);
+    fbDb = firebase.database();
+    firebaseReady = true;
+  }
+} catch(e){ console.error('Firebase init failed:', e); firebaseReady = false; }
+
+function sanitizeKey(key){
+  // Realtime Database paths can't contain . $ # [ ] or /
+  return String(key).replace(/[.$#\[\]/]/g, '_');
+}
+
+// Drop-in replacement for the window.storage API this app was originally built
+// against: shared:true goes to Firebase (visible to your whole team), shared:false
+// stays in this browser's own localStorage (per-device, e.g. "last code I used").
+const storage = {
+  async get(key, shared){
+    if (shared === false){
+      const raw = localStorage.getItem(key);
+      return raw != null ? { key, value: raw, shared } : null;
+    }
+    if (!firebaseReady) throw new Error('Firebase is not configured yet — see firebaseConfig at the top of the script');
+    const snap = await fbDb.ref(sanitizeKey(key)).once('value');
+    return snap.exists() ? { key, value: snap.val(), shared } : null;
+  },
+  async set(key, value, shared){
+    if (shared === false){
+      localStorage.setItem(key, value);
+      return { key, value, shared };
+    }
+    if (!firebaseReady) throw new Error('Firebase is not configured yet — see firebaseConfig at the top of the script');
+    await fbDb.ref(sanitizeKey(key)).set(value);
+    return { key, value, shared };
+  },
+  async delete(key, shared){
+    if (shared === false){
+      localStorage.removeItem(key);
+      return { key, deleted: true, shared };
+    }
+    if (!firebaseReady) throw new Error('Firebase is not configured yet — see firebaseConfig at the top of the script');
+    await fbDb.ref(sanitizeKey(key)).remove();
+    return { key, deleted: true, shared };
+  }
+};
+
+const STORAGE_PREFIX = 'wtc8-event-';
+const LAST_CODE_KEY = 'wtc8-last-code';
+const TEAM_PREFIX = 'wtc8-team-';
+const LAST_TEAM_CODE_KEY = 'wtc8-last-team-code';
+
+let state = null;
+let currentCode = null;
+let saveTimer = null;
+
+let teamProfile = null;
+let teamProfileCode = null;
+let profileSaveTimer = null;
+let mode = 'event'; // 'event' | 'team'
+
+const app = document.getElementById('app');
+
+/* ---------------- utility ---------------- */
+function randomCode(){
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s = '';
+  for (let i=0;i<5;i++) s += chars[Math.floor(Math.random()*chars.length)];
+  return s;
+}
+function esc(str){
+  return String(str==null?'':str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function setSync(status){
+  const el = document.getElementById('sync-dot');
+  if (!el) return;
+  el.className = 'sync-dot' + (status==='busy' ? ' busy' : status==='err' ? ' err' : '');
+  const lbl = document.getElementById('sync-label');
+  if (lbl) lbl.textContent = status==='busy' ? 'saving…' : status==='err' ? 'save failed' : 'synced';
+}
+
+/* ---------------- storage ---------------- */
+async function persistLastCode(){
+  try { await storage.set(LAST_CODE_KEY, JSON.stringify({code: currentCode}), false); }
+  catch(e){ /* non-fatal */ }
+}
+function scheduleSave(){
+  clearTimeout(saveTimer);
+  setSync('busy');
+  saveTimer = setTimeout(saveState, 500);
+}
+async function saveState(){
+  if (!state || !currentCode) return;
+  try {
+    await storage.set(STORAGE_PREFIX+currentCode, JSON.stringify(state), true);
+    setSync('ok');
+  } catch(e){ setSync('err'); }
+}
+async function tryLoad(code){
+  currentCode = code.trim().toUpperCase();
+  try {
+    const res = await storage.get(STORAGE_PREFIX+currentCode, true);
+    if (res && res.value){ state = JSON.parse(res.value); migrateState(); return true; }
+  } catch(e){ /* not found yet */ }
+  return false;
+}
+
+/* ---------------- team profile storage ---------------- */
+async function persistLastTeamCode(){
+  try { await storage.set(LAST_TEAM_CODE_KEY, JSON.stringify({code: teamProfileCode}), false); }
+  catch(e){ /* non-fatal */ }
+}
+function scheduleSaveProfile(){
+  clearTimeout(profileSaveTimer);
+  setSync('busy');
+  profileSaveTimer = setTimeout(saveTeamProfile, 500);
+}
+async function saveTeamProfile(){
+  if (!teamProfile || !teamProfileCode) return;
+  try {
+    await storage.set(TEAM_PREFIX+teamProfileCode, JSON.stringify(teamProfile), true);
+    setSync('ok');
+  } catch(e){ setSync('err'); }
+}
+async function tryLoadTeamProfile(code){
+  teamProfileCode = code.trim().toUpperCase();
+  try {
+    const res = await storage.get(TEAM_PREFIX+teamProfileCode, true);
+    if (res && res.value){ teamProfile = JSON.parse(res.value); migrateTeamProfile(); return true; }
+  } catch(e){ /* not found yet */ }
+  return false;
+}
+function migrateTeamProfile(){
+  if (!teamProfile) return;
+  if (!teamProfile.factions) teamProfile.factions = Array(8).fill('');
+  if (!teamProfile.dispositions) teamProfile.dispositions = defaultDispositions();
+  if (!teamProfile.matchupRatings) teamProfile.matchupRatings = blankMatchupRatings();
+}
+function newTeamProfile(code){
+  return {
+    code,
+    name: 'My Team',
+    players: blankPlayers('Player'),
+    dispositions: defaultDispositions(),
+    factions: Array(8).fill(''),
+    matchupRatings: blankMatchupRatings()
+  };
+}
+function migrateState(){
+  // backfill fields for events saved before they existed, so old saves keep working
+  if (!state) return;
+  [state.teamA, state.teamB].forEach(team=>{
+    if (team && !team.factions) team.factions = Array(8).fill('');
+    if (team && !team.dispositions) team.dispositions = defaultDispositions();
+    if (team && !team.matchupRatings) team.matchupRatings = blankMatchupRatings();
+  });
+}
+
+/* ---------------- model ---------------- */
+const DISPOSITIONS = ['Disruption','Take and Hold','Purge the Foe','Priority Assets','Reconnaissance'];
+function blankPlayers(prefix){
+  return Array.from({length:8}, (_,i)=>`${prefix} ${i+1}`);
+}
+function blankMatchupRatings(){
+  return Array.from({length:8}, ()=>({}));
+}
+function defaultDispositions(){
+  // a valid 8-player spread (every disposition at least once, three doubled up) — edit per real roster
+  return ['Disruption','Disruption','Take and Hold','Take and Hold','Purge the Foe','Purge the Foe','Priority Assets','Reconnaissance'];
+}
+function getDisposition(side, playerName){
+  const team = (side==='a' || side==='A') ? state.teamA : state.teamB;
+  const idx = team.players.indexOf(playerName);
+  return (idx>=0 && team.dispositions) ? (team.dispositions[idx] || '') : '';
+}
+function getFaction(side, playerName){
+  const team = (side==='a' || side==='A') ? state.teamA : state.teamB;
+  const idx = team.players.indexOf(playerName);
+  return (idx>=0 && team.factions) ? (team.factions[idx] || '') : '';
+}
+function getMatchupRating(side, playerName, opponentDisposition){
+  if (!opponentDisposition) return null;
+  const team = (side==='a' || side==='A') ? state.teamA : state.teamB;
+  const idx = team.players.indexOf(playerName);
+  if (idx<0 || !team.matchupRatings || !team.matchupRatings[idx]) return null;
+  const r = team.matchupRatings[idx][opponentDisposition];
+  return (r===undefined || r===null || r==='') ? null : r;
+}
+function dispTag(side, name){
+  const d = getDisposition(side, name);
+  const f = getFaction(side, name);
+  const parts = [d, f].filter(Boolean);
+  return parts.length ? ` <span class="mono dim" style="font-size:10px;">(${esc(parts.join(' · '))})</span>` : '';
+}
+function ratingBadgeHTML(rating){
+  if (rating == null) return '';
+  return `<span class="rating-badge r${rating}">${'★'.repeat(rating)}${'☆'.repeat(5-rating)} ${rating}/5</span>`;
+}
+function compactRatingTag(side, playerName, oppSide, oppName){
+  const rating = getMatchupRating(side, playerName, getDisposition(oppSide, oppName));
+  return rating!=null ? ` <span class="rating-badge r${rating}">[${rating}/5]</span>` : '';
+}
+function dispositionSpread(team){
+  const counts = {};
+  DISPOSITIONS.forEach(d=>counts[d]=0);
+  (team.dispositions||[]).forEach(d=>{ if (d) counts[d] = (counts[d]||0)+1; });
+  const vals = DISPOSITIONS.map(d=>counts[d]||0);
+  const allPresent = vals.every(v=>v>=1);
+  const sorted = [...vals].sort((a,b)=>b-a);
+  const shapeOk = allPresent && JSON.stringify(sorted)===JSON.stringify([2,2,2,1,1]);
+  return { counts, shapeOk };
+}
+function newEvent(code){
+  return {
+    code,
+    teamA:{ name:'Team Alpha', players: blankPlayers('Player'), dispositions: defaultDispositions(), factions: Array(8).fill(''), matchupRatings: blankMatchupRatings() },
+    teamB:{ name:'Team Beta', players: blankPlayers('Player'), dispositions: defaultDispositions(), factions: Array(8).fill(''), matchupRatings: blankMatchupRatings() },
+    tables: Array.from({length:8}, (_,i)=>({ id:i+1, label:`Table ${i+1}` })),
+    scoringMode: 'wtc',
+    setupComplete: false,
+    currentRound: 0,
+    rounds: [ newRound(1, blankPlayers('Player'), blankPlayers('Player')) ]
+  };
+}
+function freshChunk(){
+  return {
+    phase: 'nominate',
+    nomA: { defender: null, attackers: [] },
+    nomB: { defender: null, attackers: [] },
+    acceptForA: null,
+    acceptForB: null,
+    confirmed: []
+  };
+}
+function newRound(number, playersA, playersB){
+  return {
+    number,
+    poolA: [...playersA],
+    poolB: [...playersB],
+    pairings: [],
+    chunk: freshChunk(),
+    status: 'drafting'
+  };
+}
+function curRound(){ return state.rounds[state.currentRound]; }
+function availableTables(round){
+  const usedIds = new Set(round.pairings.map(p=>p.tableId));
+  round.chunk.confirmed.forEach(c=>{ if (c.tableId) usedIds.add(c.tableId); });
+  return state.tables.filter(t=>!usedIds.has(t.id));
+}
+
+/* ---------------- scoring ---------------- */
+function computePoints(a, b, mode){
+  if (a==null || b==null || isNaN(a) || isNaN(b)) return null;
+  if (mode === 'simple'){
+    if (a>b) return [1,0];
+    if (b>a) return [0,1];
+    return [0.5,0.5];
+  }
+  const diff = Math.abs(a-b);
+  if (diff <= 5) return [10,10];
+  const extra = diff - 5;
+  const tier = Math.min(10, Math.ceil(extra/5));
+  const hi = 10+tier, lo = 10-tier;
+  return a>b ? [hi,lo] : [lo,hi];
+}
+function roundTotals(round){
+  let ta=0, tb=0, complete=true;
+  round.pairings.forEach(p=>{
+    const pts = computePoints(p.scoreA, p.scoreB, state.scoringMode);
+    if (!pts){ complete=false; return; }
+    ta += pts[0]; tb += pts[1];
+  });
+  return { ta, tb, complete };
+}
+function eventStandings(){
+  let ta=0, tb=0, roundsWonA=0, roundsWonB=0, roundsDrawn=0, playedRounds=0;
+  state.rounds.forEach(r=>{
+    if (r.status !== 'complete') return;
+    const t = roundTotals(r);
+    ta += t.ta; tb += t.tb; playedRounds++;
+    if (t.ta > t.tb) roundsWonA++; else if (t.tb > t.ta) roundsWonB++; else roundsDrawn++;
+  });
+  return { ta, tb, roundsWonA, roundsWonB, roundsDrawn, playedRounds };
+}
+
+/* ---------------- routing / render ---------------- */
+function route(){
+  if (mode === 'team'){
+    app.innerHTML = teamProfile ? (teamProfileHeaderHTML() + teamProfileBodyHTML()) : landingHTML();
+    return;
+  }
+  if (!state){ app.innerHTML = landingHTML(); return; }
+  if (!state.setupComplete){ app.innerHTML = header() + setupHTML(); return; }
+  const round = curRound();
+  if (round.status === 'drafting') app.innerHTML = header() + draftHTML(round);
+  else if (round.status === 'scoring') app.innerHTML = header() + scoringHTML(round);
+  else app.innerHTML = header() + completeHTML(round);
+}
+
+function header(){
+  const round = state.rounds && state.currentRound!=null ? curRound() : null;
+  return `
+  <div class="hud-header">
+    <div class="hud-brand"><span class="bracket">[</span> 8-MAN MATCHUP CONSOLE <span class="bracket">]</span></div>
+    <div class="hud-meta">
+      <span class="hud-badge mono">CODE ${esc(state.code)}</span>
+      ${round ? `<span class="hud-badge mono">ROUND ${round.number}</span>` : ''}
+      <span class="hud-badge"><span class="sync-dot" id="sync-dot"></span><span id="sync-label">synced</span></span>
+      <button class="btn-ghost" data-action="refresh">⟳ refresh</button>
+      <button class="btn-ghost" data-action="goto-team-profile">team profile</button>
+      ${state.setupComplete ? `<button class="btn-ghost" data-action="new-event">+ new event</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function teamProfileHeaderHTML(){
+  return `
+  <div class="hud-header">
+    <div class="hud-brand"><span class="bracket">[</span> TEAM PROFILE <span class="bracket">]</span></div>
+    <div class="hud-meta">
+      <span class="hud-badge mono">CODE ${esc(teamProfile.code)}</span>
+      <span class="hud-badge"><span class="sync-dot" id="sync-dot"></span><span id="sync-label">synced</span></span>
+      <button class="btn-ghost" data-action="refresh-profile">⟳ refresh</button>
+      <button class="btn-ghost" data-action="exit-team-profile">← back to start</button>
+    </div>
+  </div>`;
+}
+
+/* ---------------- landing ---------------- */
+function landingHTML(){
+  return `
+  <div class="hud-header"><div class="hud-brand"><span class="bracket">[</span> 8-MAN MATCHUP CONSOLE <span class="bracket">]</span></div></div>
+  <div class="panel landing-card">
+    <div class="eyebrow">TEAM PROFILE</div>
+    <h2>Set up your own team</h2>
+    <p class="dim" style="font-size:13px;">Build your roster, dispositions, factions, and matchup ratings before any event exists. Give this code to your own players only — it's separate from any event code, so opponents never see it.</p>
+    <div class="field">
+      <label class="field-label">Team profile code</label>
+      <input type="text" id="team-profile-code" maxlength="8" style="text-transform:uppercase;font-family:var(--font-mono);letter-spacing:.1em;" placeholder="${randomCode()}">
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" data-action="open-team-profile">Create / Open team profile</button>
+      <button class="btn" data-action="random-team-code">Generate new code</button>
+    </div>
+    <div id="team-profile-error" class="error-text"></div>
+  </div>
+  <div class="panel landing-card">
+    <div class="eyebrow">EVENT ACCESS</div>
+    <h2>Enter an event code</h2>
+    <p class="dim" style="font-size:13px;">Create a new event, or enter a code someone already shared with you to jump into the same live pairing session. Anyone with the code can view and edit it.</p>
+    <div class="field">
+      <label class="field-label">Event code</label>
+      <input type="text" id="landing-code" maxlength="8" style="text-transform:uppercase;font-family:var(--font-mono);letter-spacing:.1em;" placeholder="${randomCode()}">
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" data-action="join-event">Create / Join</button>
+      <button class="btn" data-action="random-code">Generate new code</button>
+    </div>
+    <div id="landing-error" class="error-text"></div>
+  </div>`;
+}
+
+function teamProfileBodyHTML(){
+  return `
+  <div class="panel">
+    <div class="panel-title"><h2>${esc(teamProfile.name)}</h2><span class="eyebrow">YOUR TEAM ONLY</span></div>
+    <input class="team-name-input" type="text" data-bind="profile.name" value="${esc(teamProfile.name)}" style="margin-bottom:14px;">
+    <div class="roster-grid">
+      ${teamProfile.players.map((p,i)=>rosterRowHTML('p', p, i, teamProfile.dispositions[i], teamProfile.factions[i])).join('')}
+    </div>
+    ${dispositionSpreadHTML(teamProfile)}
+  </div>
+  <div class="panel">
+    <div class="panel-title"><h3>Matchup ratings</h3></div>
+    <p class="note" style="margin-top:0;">1 (bad matchup) to 5 (good matchup) against each Force Disposition you might face. This travels with the profile and can be pulled into any event.</p>
+    ${matchupMatrixHTML('p', teamProfile)}
+  </div>
+  <div class="panel">
+    <div class="panel-title"><h3>Use this profile in an event</h3></div>
+    <p class="note" style="margin-top:0;">Starting an event elsewhere? Use the "Import a team profile" box on that event's setup screen with this code: <b class="mono">${esc(teamProfile.code)}</b>. Or jump straight into a new event with this roster already filled in:</p>
+    <div class="btn-row">
+      <button class="btn btn-primary" data-action="start-event-from-profile">Start an event with this team →</button>
+    </div>
+  </div>`;
+}
+
+/* ---------------- setup ---------------- */
+function rosterRowHTML(side, name, idx, disposition, faction){
+  const prefix = side==='p' ? 'profile' : `team${side.toUpperCase()}`;
+  return `
+  <div class="roster-row">
+    <input class="player-name" type="text" data-bind="${prefix}.players.${idx}" value="${esc(name)}" placeholder="Player name">
+    <input class="player-faction" type="text" data-bind="${prefix}.factions.${idx}" value="${esc(faction||'')}" placeholder="Faction">
+    <select data-action="set-disposition" data-side="${side}" data-idx="${idx}">
+      ${DISPOSITIONS.map(d=>`<option value="${d}" ${disposition===d?'selected':''}>${esc(d)}</option>`).join('')}
+    </select>
+  </div>`;
+}
+function dispositionSpreadHTML(team){
+  const { counts, shapeOk } = dispositionSpread(team);
+  const parts = DISPOSITIONS.map(d=>`<span class="mono" style="margin-right:12px;">${esc(d)} <b>${counts[d]}</b></span>`).join('');
+  return `<div class="note" style="margin-top:10px;">${parts}<br>${shapeOk
+    ? `<span style="color:var(--good)">✓ valid 8-player spread</span>`
+    : `<span style="color:var(--warn)">⚠ per the 11th ed Teams Event Companion, an 8-player roster should carry every Force Disposition at least once, with exactly three doubled up (2/2/2/1/1)</span>`}</div>`;
+}
+function matchupMatrixHTML(side, team){
+  const rows = team.players.map((p,i)=>{
+    const ratings = team.matchupRatings[i] || {};
+    const cells = DISPOSITIONS.map(d=>{
+      const val = (ratings[d]!=null) ? ratings[d] : '';
+      return `<td><select data-action="set-matchup" data-side="${side}" data-idx="${i}" data-disp="${esc(d)}">
+        <option value=""${val===''?' selected':''}>—</option>
+        ${[1,2,3,4,5].map(n=>`<option value="${n}" ${String(val)===String(n)?'selected':''}>${n}</option>`).join('')}
+      </select></td>`;
+    }).join('');
+    return `<tr><td class="matrix-name">${esc(p)}</td>${cells}</tr>`;
+  }).join('');
+  return `<div class="matrix-scroll"><table class="matchup-matrix">
+    <thead><tr><th></th>${DISPOSITIONS.map(d=>`<th>${esc(d)}</th>`).join('')}</tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+function importProfileHTML(){
+  return `
+  <div class="panel">
+    <div class="panel-title"><h3>Import a team profile</h3></div>
+    <p class="note" style="margin-top:0;">Already built a team profile (roster, dispositions, factions, matchup ratings) from the start screen? Pull it in here instead of retyping everything.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+      <div style="flex:1;min-width:140px;">
+        <div class="field-label">Team profile code</div>
+        <input type="text" id="import-profile-code" style="text-transform:uppercase;font-family:var(--font-mono);letter-spacing:.1em;">
+      </div>
+      <button class="btn" data-action="import-profile" data-target="A">Import into ${esc(state.teamA.name)}</button>
+      <button class="btn" data-action="import-profile" data-target="B">Import into ${esc(state.teamB.name)}</button>
+    </div>
+    <div id="import-error" class="error-text"></div>
+  </div>`;
+}
+function setupHTML(){
+  const t = state.tables;
+  return `
+  ${importProfileHTML()}
+  <div class="panel">
+    <div class="panel-title"><h2>Event setup</h2><span class="eyebrow">STEP 1 OF 1</span></div>
+    <div class="two-col">
+      <div class="team-block a">
+        <input class="team-name-input" type="text" data-bind="teamA.name" value="${esc(state.teamA.name)}">
+        <div class="roster-grid">
+          ${state.teamA.players.map((p,i)=>rosterRowHTML('a', p, i, state.teamA.dispositions[i], state.teamA.factions[i])).join('')}
+        </div>
+        ${dispositionSpreadHTML(state.teamA)}
+      </div>
+      <div class="team-block b">
+        <input class="team-name-input" type="text" data-bind="teamB.name" value="${esc(state.teamB.name)}">
+        <div class="roster-grid">
+          ${state.teamB.players.map((p,i)=>rosterRowHTML('b', p, i, state.teamB.dispositions[i], state.teamB.factions[i])).join('')}
+        </div>
+        ${dispositionSpreadHTML(state.teamB)}
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><h3>Matchup ratings</h3></div>
+    <p class="note" style="margin-top:0;">Each player rates their own confidence facing each Force Disposition — 1 (bad matchup) to 5 (good matchup). These show up as a badge next to each candidate during pairing, to help the defending captain pick.</p>
+    <div class="two-col">
+      <div>
+        <div class="side-title a" style="margin-bottom:8px;"><span class="swatch"></span>${esc(state.teamA.name)}</div>
+        ${matchupMatrixHTML('a', state.teamA)}
+      </div>
+      <div>
+        <div class="side-title b" style="margin-bottom:8px;"><span class="swatch"></span>${esc(state.teamB.name)}</div>
+        ${matchupMatrixHTML('b', state.teamB)}
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><h3>Tables &amp; missions</h3></div>
+    <div class="table-edit-grid">
+      ${t.map((tb,i)=>`<div class="table-edit-row"><span class="tnum mono">T${tb.id}</span><input type="text" data-bind="tables.${i}.label" value="${esc(tb.label)}"></div>`).join('')}
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><h3>Scoring</h3></div>
+    <div class="radio-row">
+      <label class="radio-opt"><input type="radio" name="scoringMode" value="wtc" ${state.scoringMode==='wtc'?'checked':''} data-action="set-scoring"> WTC-style differential (20-0 scale, 5VP tiers)</label>
+      <label class="radio-opt"><input type="radio" name="scoringMode" value="simple" ${state.scoringMode==='simple'?'checked':''} data-action="set-scoring"> Simple win / loss / draw</label>
+    </div>
+    <p class="note">WTC mode: a 0-5 VP gap is a 10-10 draw; every extra 5 VP shifts the split by 1 point each way, capping at 20-0 for a 51+ gap (matches the standard team-event differential chart). Switch to Simple if your group just counts wins.</p>
+  </div>
+  <div class="btn-row">
+    <button class="btn btn-primary" data-action="finish-setup">Start Round 1 →</button>
+  </div>`;
+}
+
+/* ---------------- draft (per round, per chunk phase) ---------------- */
+function draftHTML(round){
+  const c = round.chunk;
+  let body = '';
+  if (c.phase === 'nominate') body = nominateHTML(round);
+  else if (c.phase === 'acceptRefuse') body = acceptRefuseHTML(round);
+  else if (c.phase === 'assignTables') body = assignTablesHTML(round);
+  else if (c.phase === 'finalTables') body = finalTablesHTML(round);
+  return `
+  <div class="panel">
+    <div class="step-caption">
+      <span class="eyebrow">${sectionName(round)}</span><br>
+      <span class="step-num mono">${phaseLabel(c.phase)}</span>
+    </div>
+    ${body}
+  </div>
+  ${tableGridHTML(round)}`;
+}
+function sectionName(round){
+  const n = Math.floor(round.pairings.length/2) + 1;
+  return { 1:'INITIAL SKIRMISH 1', 2:'INITIAL SKIRMISH 2', 3:'MAIN ENGAGEMENT', 4:'CHAMPION SYSTEM' }[n] || `SECTION ${n}`;
+}
+
+function phaseLabel(phase){
+  return {
+    nominate: 'NOMINATE DEFENDER + 2 ATTACKERS (EACH TEAM)',
+    acceptRefuse: 'ACCEPT ONE ATTACKER, REFUSE THE OTHER',
+    assignTables: 'DEFENDERS CLAIM A TABLE + LAYOUT',
+    finalTables: 'ASSIGN THE LAST TWO TABLES + LAYOUTS'
+  }[phase] || '';
+}
+
+function nominateHTML(round){
+  const c = round.chunk;
+  return `
+  <div class="warroom">
+    ${sidePoolHTML('a', state.teamA.name, round.poolA, c.nomA)}
+    ${sidePoolHTML('b', state.teamB.name, round.poolB, c.nomB)}
+  </div>
+  ${nominationStatusHTML(round)}
+  <div class="btn-row">
+    <button class="btn btn-primary" data-action="confirm-nominations" ${nominationsValid(round)?'':'disabled'}>Confirm nominations →</button>
+  </div>
+  <div id="nom-error" class="error-text"></div>`;
+}
+function nominationStatusHTML(round){
+  const c = round.chunk;
+  const missing = [];
+  [['a', state.teamA.name, c.nomA], ['b', state.teamB.name, c.nomB]].forEach(([side, name, nom])=>{
+    if (!nom.defender) missing.push(`${esc(name)}: pick a defender`);
+    if (nom.attackers.length < 2) missing.push(`${esc(name)}: pick ${2-nom.attackers.length} more attacker${2-nom.attackers.length>1?'s':''}`);
+  });
+  if (!missing.length) return `<p class="note" style="color:var(--good);">✓ Ready — both teams have a defender and 2 attackers picked.</p>`;
+  return `<p class="note">Still needed: ${missing.join(' · ')}</p>`;
+}
+function nominationsValid(round){
+  const c = round.chunk;
+  return c.nomA.defender && c.nomA.attackers.length===2 && c.nomB.defender && c.nomB.attackers.length===2;
+}
+function sidePoolHTML(side, name, pool, nom){
+  return `
+  <div class="side-panel ${side}">
+    <div class="side-title ${side}"><span class="swatch"></span>${esc(name)}<span class="pool-count">${pool.length} in pool</span></div>
+    <div class="pool-list">
+      ${pool.map(p=>{
+        const isDef = nom.defender === p;
+        const isAtk = nom.attackers.includes(p);
+        return `<div class="pool-item">
+          <label style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;">
+            <input type="radio" name="def-${side}" data-action="pick-defender" data-side="${side}" data-player="${esc(p)}" ${isDef?'checked':''}>
+            <span>${esc(p)}${dispTag(side,p)}</span>
+          </label>
+          <label style="margin-left:auto;display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-dim);flex-shrink:0;">
+            <input type="checkbox" data-action="pick-attacker" data-side="${side}" data-player="${esc(p)}" ${isAtk?'checked':''} ${isDef?'disabled':''}> atk
+          </label>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+function champPreviewHTML(round){
+  if (round.poolA.length !== 4 || round.poolB.length !== 4) return '';
+  const c = round.chunk;
+  if (!c.nomA.defender || c.nomA.attackers.length<2 || !c.nomB.defender || c.nomB.attackers.length<2) return '';
+  const leftoverA = round.poolA.find(p=>p!==c.nomA.defender && !c.nomA.attackers.includes(p));
+  const leftoverB = round.poolB.find(p=>p!==c.nomB.defender && !c.nomB.attackers.includes(p));
+  if (!leftoverA || !leftoverB) return '';
+  return `<div class="note" style="margin-top:14px;border-top:1px dashed var(--line);padding-top:10px;">
+    <span class="eyebrow">CHAMPION MATCH PREVIEW</span><br>
+    Whoever's left out of this round's nominations locks into the very last game: <b>${esc(leftoverA)}${dispTag('a',leftoverA)}</b> vs <b>${esc(leftoverB)}${dispTag('b',leftoverB)}</b>. Whichever two players get refused this round will play each other on the table right before it.
+  </div>`;
+}
+
+function acceptRefuseHTML(round){
+  const c = round.chunk;
+  return `
+  <p class="dim" style="font-size:13px;margin-top:0;">Each defender faces the two attackers offered against them. Pick the one they'll actually play — the other returns to that team's pool.</p>
+  <div class="vs-wrap">
+    <div class="vs-label">${esc(state.teamA.name).toUpperCase()}'S DEFENDER</div>
+    <div class="vs-grid">
+      <div class="vs-def">${esc(c.nomA.defender)}${dispTag('a', c.nomA.defender)}</div>
+      <div class="vs-divider">vs</div>
+      <div class="atk-options">
+        ${c.nomB.attackers.map(p=>atkCardHTML(p, c.acceptForA, 'acceptForA', 'b', 'a', c.nomA.defender)).join('')}
+      </div>
+    </div>
+  </div>
+  <div class="vs-wrap">
+    <div class="vs-label">${esc(state.teamB.name).toUpperCase()}'S DEFENDER</div>
+    <div class="vs-grid">
+      <div class="vs-def">${esc(c.nomB.defender)}${dispTag('b', c.nomB.defender)}</div>
+      <div class="vs-divider">vs</div>
+      <div class="atk-options">
+        ${c.nomA.attackers.map(p=>atkCardHTML(p, c.acceptForB, 'acceptForB', 'a', 'b', c.nomB.defender)).join('')}
+      </div>
+    </div>
+  </div>
+  <div class="btn-row">
+    <button class="btn btn-primary" data-action="confirm-accept-refuse" ${c.acceptForA && c.acceptForB ? '' : 'disabled'}>Confirm pairings →</button>
+  </div>
+  ${champPreviewHTML(round)}`;
+}
+function atkCardHTML(player, chosen, field, side, defSide, defName){
+  const isChosen = chosen === player;
+  const otherChosen = chosen && !isChosen;
+  const rating = getMatchupRating(defSide, defName, getDisposition(side, player));
+  return `<div class="atk-card ${isChosen?'chosen':''} ${otherChosen?'faded':''}">
+    <span>${esc(player)}${dispTag(side, player)}${rating!=null?`<br>${ratingBadgeHTML(rating)}`:''}</span>
+    ${isChosen ? `<span class="stamp">ACCEPTED</span>` : `<button class="btn btn-ghost" data-action="choose-attacker" data-field="${field}" data-player="${esc(player)}">Accept</button>`}
+  </div>`;
+}
+
+function assignTablesHTML(round){
+  const c = round.chunk;
+  const avail = availableTables(round);
+  return `
+  <p class="dim" style="font-size:13px;margin-top:0;">Each defender's team claims a table, then picks the layout (A/B/C) for their game.</p>
+  ${c.confirmed.map((p,idx)=>{
+    const teamLabel = p.defenderSide==='A' ? state.teamA.name : state.teamB.name;
+    return `<div class="panel" style="background:var(--panel-alt);margin-bottom:10px;">
+      <div style="margin-bottom:10px;font-size:13px;"><span class="dim">${esc(teamLabel)} defends:</span> <span style="color:var(--teamA)">${esc(p.playerA)}${dispTag('a',p.playerA)}</span> vs <span style="color:var(--teamB)">${esc(p.playerB)}${dispTag('b',p.playerB)}</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;">
+        <div>
+          <div class="field-label">Table</div>
+          ${p.tableId ? `<div class="hud-badge mono">T${p.tableId} — ${esc(tableLabel(p.tableId))} ✓</div>` :
+          `<div style="display:flex;gap:8px;flex-wrap:wrap;">${avail.map(t=>`<button class="btn" data-action="pick-table" data-idx="${idx}" data-table="${t.id}">T${t.id} — ${esc(t.label)}</button>`).join('')}</div>`}
+        </div>
+        <div>
+          <div class="field-label">Layout</div>
+          ${p.layout ? `<div class="hud-badge mono">LAYOUT ${esc(p.layout)} ✓</div>` :
+          `<div style="display:flex;gap:8px;">${['A','B','C'].map(l=>`<button class="btn" data-action="pick-layout" data-idx="${idx}" data-layout="${l}">${l}</button>`).join('')}</div>`}
+        </div>
+      </div>
+    </div>`;
+  }).join('')}
+  <div class="btn-row">
+    <button class="btn btn-primary" data-action="confirm-tables" ${c.confirmed.every(p=>p.tableId && p.layout) ? '' : 'disabled'}>Lock in &amp; continue →</button>
+  </div>
+  ${champPreviewHTML(round)}`;
+}
+function tableLabel(id){ const t = state.tables.find(t=>t.id===id); return t?t.label:''; }
+
+function finalTablesHTML(round){
+  const c = round.chunk;
+  const avail = availableTables(round);
+  const labels = ['🔁 REJECT REMATCH — this round\'s two refused attackers', '🏆 CHAMPION MATCH — the two players never offered'];
+  return `
+  <p class="dim" style="font-size:13px;margin-top:0;">These last two matchups are set automatically — claim a table and layout for each.</p>
+  ${c.confirmed.map((p,idx)=>`
+    <div class="panel" style="background:var(--panel-alt);margin-bottom:10px;">
+      <div class="eyebrow" style="margin-bottom:8px;">${labels[idx]||''}</div>
+      <div style="margin-bottom:10px;font-size:13px;"><span style="color:var(--teamA)">${esc(p.playerA)}${dispTag('a',p.playerA)}</span> vs <span style="color:var(--teamB)">${esc(p.playerB)}${dispTag('b',p.playerB)}</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;">
+        <div>
+          <div class="field-label">Table</div>
+          ${p.tableId ? `<div class="hud-badge mono">T${p.tableId} — ${esc(tableLabel(p.tableId))} ✓</div>` :
+          `<div style="display:flex;gap:8px;flex-wrap:wrap;">${avail.map(t=>`<button class="btn" data-action="pick-final-table" data-idx="${idx}" data-table="${t.id}">T${t.id} — ${esc(t.label)}</button>`).join('')}</div>`}
+        </div>
+        <div>
+          <div class="field-label">Layout</div>
+          ${p.layout ? `<div class="hud-badge mono">LAYOUT ${esc(p.layout)} ✓</div>` :
+          `<div style="display:flex;gap:8px;">${['A','B','C'].map(l=>`<button class="btn" data-action="pick-final-layout" data-idx="${idx}" data-layout="${l}">${l}</button>`).join('')}</div>`}
+        </div>
+      </div>
+    </div>`).join('')}
+  <div class="btn-row">
+    <button class="btn btn-primary" data-action="confirm-final-tables" ${c.confirmed.every(p=>p.tableId && p.layout) ? '' : 'disabled'}>Finish round draft →</button>
+  </div>`;
+}
+
+function tableGridHTML(round){
+  const cards = state.tables.map(t=>{
+    const p = round.pairings.find(p=>p.tableId===t.id);
+    if (!p){
+      return `<div class="table-card"><div class="tid">T${t.id}</div><div class="mission">${esc(t.label)}</div><div class="empty-tag">unassigned</div></div>`;
+    }
+    return `<div class="table-card filled"><div class="tid">T${t.id}${p.layout?` · L-${esc(p.layout)}`:''}</div><div class="mission">${esc(t.label)}</div>
+      <div class="matchup"><span class="p a">${esc(p.playerA)}${dispTag('a',p.playerA)}${compactRatingTag('a',p.playerA,'b',p.playerB)}</span><span class="p b">${esc(p.playerB)}${dispTag('b',p.playerB)}${compactRatingTag('b',p.playerB,'a',p.playerA)}</span></div></div>`;
+  }).join('');
+  return `<div class="panel"><div class="panel-title"><h3>Battle grid</h3><span class="dim mono" style="font-size:11px;">${round.pairings.length}/8 SET</span></div><div class="table-grid">${cards}</div></div>`;
+}
+
+/* ---------------- scoring screen ---------------- */
+function ptsPreviewHTML(p){
+  const pts = computePoints(p.scoreA, p.scoreB, state.scoringMode);
+  if (!pts) return '—';
+  if (state.scoringMode === 'simple') return `${pts[0]}–${pts[1]}`;
+  const diff = Math.abs((p.scoreA||0)-(p.scoreB||0));
+  return `Δ${diff} → ${pts[0]}–${pts[1]}`;
+}
+function updateScorePreviews(round, changedTableId){
+  if (changedTableId != null){
+    const p = round.pairings.find(p=>p.tableId===changedTableId);
+    const el = document.getElementById(`pts-${changedTableId}`);
+    if (p && el) el.textContent = ptsPreviewHTML(p);
+  }
+  const t = roundTotals(round);
+  const filled = round.pairings.filter(p=>p.scoreA!=null && p.scoreB!=null).length;
+  const elA = document.getElementById('live-total-a');
+  const elB = document.getElementById('live-total-b');
+  const elNote = document.getElementById('live-total-note');
+  if (elA) elA.textContent = t.ta;
+  if (elB) elB.textContent = t.tb;
+  if (elNote) elNote.textContent = filled === round.pairings.length
+    ? 'all tables entered — ready to submit'
+    : `projected from ${filled}/${round.pairings.length} tables entered`;
+}
+function scoringHTML(round){
+  const t = roundTotals(round);
+  const filled = round.pairings.filter(p=>p.scoreA!=null && p.scoreB!=null).length;
+  const rows = round.pairings.slice().sort((x,y)=>x.tableId-y.tableId).map(p=>{
+    return `
+    <div class="score-row">
+      <div class="tlabel">T${p.tableId}${p.layout?`<br>L-${esc(p.layout)}`:''}</div>
+      <div class="pname a">${esc(p.playerA)}${dispTag('a',p.playerA)}</div>
+      <input type="number" min="0" max="100" data-bind-score="A" data-table="${p.tableId}" value="${p.scoreA==null?'':p.scoreA}" placeholder="VP">
+      <input type="number" min="0" max="100" data-bind-score="B" data-table="${p.tableId}" value="${p.scoreB==null?'':p.scoreB}" placeholder="VP">
+      <div class="pname b">${esc(p.playerB)}${dispTag('b',p.playerB)}</div>
+      <div class="pts-preview" id="pts-${p.tableId}">${ptsPreviewHTML(p)}</div>
+    </div>`;
+  }).join('');
+  return `
+  <div class="panel">
+    <div class="panel-title"><h2>Round ${round.number} — enter results</h2><span class="eyebrow">${state.scoringMode==='wtc'?'WTC SCALE':'WIN/LOSS'} · VP CAPPED AT 100</span></div>
+    <div class="score-banner">
+      <div class="side a"><div class="big-score" id="live-total-a">${t.ta}</div><div class="who">${esc(state.teamA.name).toUpperCase()}</div></div>
+      <div class="side b"><div class="big-score" id="live-total-b">${t.tb}</div><div class="who">${esc(state.teamB.name).toUpperCase()}</div></div>
+    </div>
+    <p class="note" id="live-total-note" style="text-align:center;margin-top:-6px;">${filled===round.pairings.length ? 'all tables entered — ready to submit' : `projected from ${filled}/${round.pairings.length} tables entered`}</p>
+    <div class="score-row" style="border-bottom:1px solid var(--line);font-family:var(--font-mono);font-size:11px;color:var(--text-dim);">
+      <div>TABLE</div><div>${esc(state.teamA.name)}</div><div>VP</div><div>VP</div><div>${esc(state.teamB.name)}</div><div>PTS</div>
+    </div>
+    ${rows}
+    <div class="btn-row">
+      <button class="btn btn-primary" data-action="submit-scores">Submit round results →</button>
+    </div>
+    <div id="score-error" class="error-text"></div>
+  </div>`;
+}
+
+/* ---------------- round complete / standings ---------------- */
+function completeHTML(round){
+  const t = roundTotals(round);
+  const standings = eventStandings();
+  const roundWinner = t.ta>t.tb ? state.teamA.name : t.tb>t.ta ? state.teamB.name : 'Draw';
+  const isLastShown = state.currentRound === state.rounds.length - 1;
+  const rows = round.pairings.slice().sort((x,y)=>x.tableId-y.tableId).map(p=>{
+    const pts = computePoints(p.scoreA,p.scoreB,state.scoringMode);
+    return `<div class="standings-row">
+      <span class="mono" style="color:var(--gold);width:48px;">T${p.tableId}${p.layout?`/${esc(p.layout)}`:''}</span>
+      <span style="flex:1;"><span style="color:var(--teamA)">${esc(p.playerA)}${dispTag('a',p.playerA)}${compactRatingTag('a',p.playerA,'b',p.playerB)}</span> ${p.scoreA} — ${p.scoreB} <span style="color:var(--teamB)">${esc(p.playerB)}${dispTag('b',p.playerB)}${compactRatingTag('b',p.playerB,'a',p.playerA)}</span></span>
+      <span class="mono dim">${pts[0]}–${pts[1]}</span>
+    </div>`;
+  }).join('');
+  return `
+  <div class="panel">
+    <div class="winner-strip">${roundWinner==='Draw' ? `ROUND ${round.number} DRAWN` : `${esc(roundWinner).toUpperCase()} WIN ROUND ${round.number}`}</div>
+    <div class="score-banner">
+      <div class="side a"><div class="big-score">${t.ta}</div><div class="who">${esc(state.teamA.name).toUpperCase()}</div></div>
+      <div class="side b"><div class="big-score">${t.tb}</div><div class="who">${esc(state.teamB.name).toUpperCase()}</div></div>
+    </div>
+    ${rows}
+    <div class="btn-row">
+      <button class="btn btn-ghost" data-action="edit-scores">Edit scores</button>
+      ${isLastShown ? `<button class="btn btn-primary" data-action="next-round">Start round ${round.number+1} →</button>` : ''}
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><h3>Event standings</h3><span class="dim mono" style="font-size:11px;">${standings.playedRounds} ROUND${standings.playedRounds===1?'':'S'} PLAYED</span></div>
+    <div class="score-banner">
+      <div class="side a"><div class="big-score">${standings.ta}</div><div class="who">${esc(state.teamA.name).toUpperCase()}</div></div>
+      <div class="side b"><div class="big-score">${standings.tb}</div><div class="who">${esc(state.teamB.name).toUpperCase()}</div></div>
+    </div>
+    <div class="standings-row"><span>Rounds won</span><span class="mono">${standings.roundsWonA} — ${standings.roundsWonB}${standings.roundsDrawn?` (${standings.roundsDrawn} drawn)`:''}</span></div>
+  </div>`;
+}
+
+/* ---------------- state transitions ---------------- */
+function setByPath(obj, path, value){
+  const parts = path.split('.');
+  let cur = obj;
+  for (let i=0;i<parts.length-1;i++){
+    const key = /^\d+$/.test(parts[i]) ? parseInt(parts[i]) : parts[i];
+    cur = cur[key];
+  }
+  const last = /^\d+$/.test(parts[parts.length-1]) ? parseInt(parts[parts.length-1]) : parts[parts.length-1];
+  cur[last] = value;
+}
+
+function afterChunkConfirmed(round){
+  const c = round.chunk;
+  // capture who got refused this chunk, in case this is the chunk that brings the pool down to its last two per side
+  const refusedA = c.acceptForB ? c.nomA.attackers.find(p=>p!==c.acceptForB) : null;
+  const refusedB = c.acceptForA ? c.nomB.attackers.find(p=>p!==c.acceptForA) : null;
+
+  c.confirmed.forEach(p=>round.pairings.push(p));
+
+  const nextChunk = freshChunk();
+  if (round.poolA.length === 2 && round.poolB.length === 2){
+    // Last two per side: this round's two refused attackers play each other (2nd-to-last table),
+    // and the two players never even offered — the Champions — play the very last game. Both automatic.
+    const leftoverA = round.poolA.find(p=>p!==refusedA) || round.poolA[0];
+    const leftoverB = round.poolB.find(p=>p!==refusedB) || round.poolB[0];
+    nextChunk.confirmed = [
+      { playerA: refusedA, playerB: refusedB, defenderSide:'final', tableId:null, layout:null, scoreA:null, scoreB:null },
+      { playerA: leftoverA, playerB: leftoverB, defenderSide:'final', tableId:null, layout:null, scoreA:null, scoreB:null }
+    ];
+    nextChunk.phase = 'finalTables';
+    round.poolA = []; round.poolB = [];
+  } else if (round.poolA.length === 0){
+    round.status = 'scoring';
+  } else {
+    nextChunk.phase = 'nominate';
+  }
+  round.chunk = nextChunk;
+}
+
+/* ---------------- event handlers ---------------- */
+app.addEventListener('click', async (e)=>{
+  const el = e.target.closest('[data-action]');
+  if (!el) return;
+  const action = el.dataset.action;
+
+  if (action === 'join-event'){
+    const input = document.getElementById('landing-code');
+    let code = (input.value || '').trim();
+    if (!code) code = randomCode();
+    const found = await tryLoad(code);
+    if (!found){ state = newEvent(code.toUpperCase()); await saveState(); }
+    mode = 'event';
+    await persistLastCode();
+    route();
+    return;
+  }
+  if (action === 'random-code'){
+    document.getElementById('landing-code').value = randomCode();
+    return;
+  }
+  if (action === 'refresh'){
+    if (currentCode){
+      try{
+        const res = await storage.get(STORAGE_PREFIX+currentCode, true);
+        if (res && res.value){ state = JSON.parse(res.value); migrateState(); }
+      }catch(err){ /* ignore */ }
+    }
+    route();
+    return;
+  }
+  if (action === 'new-event'){
+    try { await storage.delete(LAST_CODE_KEY, false); } catch(err){ /* non-fatal */ }
+    state = null; currentCode = null;
+    mode = 'event';
+    route();
+    return;
+  }
+  if (action === 'open-team-profile'){
+    const input = document.getElementById('team-profile-code');
+    let code = (input.value || '').trim();
+    if (!code) code = randomCode();
+    const found = await tryLoadTeamProfile(code);
+    if (!found){ teamProfile = newTeamProfile(code.toUpperCase()); await saveTeamProfile(); }
+    mode = 'team';
+    await persistLastTeamCode();
+    route();
+    return;
+  }
+  if (action === 'random-team-code'){
+    document.getElementById('team-profile-code').value = randomCode();
+    return;
+  }
+  if (action === 'refresh-profile'){
+    if (teamProfileCode){
+      try{
+        const res = await storage.get(TEAM_PREFIX+teamProfileCode, true);
+        if (res && res.value){ teamProfile = JSON.parse(res.value); migrateTeamProfile(); }
+      }catch(err){ /* ignore */ }
+    }
+    route();
+    return;
+  }
+  if (action === 'exit-team-profile'){
+    teamProfile = null; teamProfileCode = null;
+    mode = 'event';
+    route();
+    return;
+  }
+  if (action === 'goto-team-profile'){
+    mode = 'team';
+    if (!teamProfile){
+      try {
+        const last = await storage.get(LAST_TEAM_CODE_KEY, false);
+        if (last && last.value){
+          const code = JSON.parse(last.value).code;
+          await tryLoadTeamProfile(code);
+        }
+      } catch(err){ /* fall through to landing */ }
+    }
+    route();
+    return;
+  }
+  if (action === 'start-event-from-profile'){
+    const code = randomCode();
+    state = newEvent(code);
+    state.teamA.name = teamProfile.name;
+    state.teamA.players = [...teamProfile.players];
+    state.teamA.dispositions = [...teamProfile.dispositions];
+    state.teamA.factions = [...teamProfile.factions];
+    state.teamA.matchupRatings = teamProfile.matchupRatings.map(r=>({...r}));
+    currentCode = code;
+    mode = 'event';
+    await saveState();
+    await persistLastCode();
+    route();
+    return;
+  }
+  if (action === 'import-profile'){
+    const codeInput = document.getElementById('import-profile-code');
+    const errEl = document.getElementById('import-error');
+    const code = (codeInput ? codeInput.value : '').trim().toUpperCase();
+    if (!code){ if (errEl) errEl.textContent = 'Enter a team profile code first.'; return; }
+    try {
+      const res = await storage.get(TEAM_PREFIX+code, true);
+      if (res && res.value){
+        const profile = JSON.parse(res.value);
+        const target = el.dataset.target === 'A' ? state.teamA : state.teamB;
+        target.name = profile.name || target.name;
+        target.players = [...(profile.players || target.players)];
+        target.dispositions = [...(profile.dispositions || defaultDispositions())];
+        target.factions = [...(profile.factions || Array(8).fill(''))];
+        target.matchupRatings = (profile.matchupRatings || blankMatchupRatings()).map(r=>({...r}));
+        scheduleSave(); route();
+      } else if (errEl){
+        errEl.textContent = `No team profile found for code ${code}.`;
+      }
+    } catch(err){
+      if (errEl) errEl.textContent = 'Could not load that team profile — try again.';
+    }
+    return;
+  }
+  if (action === 'finish-setup'){
+    state.setupComplete = true;
+    scheduleSave();
+    route();
+    return;
+  }
+  if (action === 'pick-table'){
+    const round = curRound();
+    const idx = parseInt(el.dataset.idx);
+    round.chunk.confirmed[idx].tableId = parseInt(el.dataset.table);
+    scheduleSave(); route();
+    return;
+  }
+  if (action === 'pick-final-table'){
+    const round = curRound();
+    const idx = parseInt(el.dataset.idx);
+    round.chunk.confirmed[idx].tableId = parseInt(el.dataset.table);
+    scheduleSave(); route();
+    return;
+  }
+  if (action === 'pick-layout' || action === 'pick-final-layout'){
+    const round = curRound();
+    const idx = parseInt(el.dataset.idx);
+    round.chunk.confirmed[idx].layout = el.dataset.layout;
+    scheduleSave(); route();
+    return;
+  }
+  if (action === 'choose-attacker'){
+    const round = curRound();
+    round.chunk[el.dataset.field] = el.dataset.player;
+    scheduleSave(); route();
+    return;
+  }
+  if (action === 'confirm-nominations'){
+    const round = curRound();
+    if (!nominationsValid(round)) return;
+    round.chunk.phase = 'acceptRefuse';
+    scheduleSave(); route();
+    return;
+  }
+  if (action === 'confirm-accept-refuse'){
+    const round = curRound();
+    const c = round.chunk;
+    const pairing1 = { playerA: c.nomA.defender, playerB: c.acceptForA, defenderSide:'A', tableId:null, layout:null, scoreA:null, scoreB:null };
+    const pairing2 = { playerA: c.acceptForB, playerB: c.nomB.defender, defenderSide:'B', tableId:null, layout:null, scoreA:null, scoreB:null };
+    // remove the defender + accepted attacker from each pool; the refused attacker was
+    // never removed from the pool in the first place, so it's already back where it belongs
+    round.poolA = round.poolA.filter(p=>p!==c.nomA.defender && p!==c.acceptForB);
+    round.poolB = round.poolB.filter(p=>p!==c.nomB.defender && p!==c.acceptForA);
+    c.confirmed = [pairing1, pairing2];
+    c.phase = 'assignTables';
+    scheduleSave(); route();
+    return;
+  }
+  if (action === 'confirm-tables'){
+    const round = curRound();
+    if (!round.chunk.confirmed.every(p=>p.tableId && p.layout)) return;
+    afterChunkConfirmed(round);
+    scheduleSave(); route();
+    return;
+  }
+  if (action === 'confirm-final-tables'){
+    const round = curRound();
+    if (!round.chunk.confirmed.every(p=>p.tableId && p.layout)) return;
+    round.chunk.confirmed.forEach(p=>round.pairings.push(p));
+    round.status = 'scoring';
+    round.chunk = freshChunk();
+    scheduleSave(); route();
+    return;
+  }
+  if (action === 'submit-scores'){
+    const round = curRound();
+    const allFilled = round.pairings.every(p=>p.scoreA!=null && p.scoreB!=null && !isNaN(p.scoreA) && !isNaN(p.scoreB));
+    if (!allFilled){
+      const errEl = document.getElementById('score-error');
+      if (errEl) errEl.textContent = 'Enter a VP total for both players on every table before submitting.';
+      return;
+    }
+    round.status = 'complete';
+    scheduleSave(); route();
+    return;
+  }
+  if (action === 'edit-scores'){
+    const round = curRound();
+    round.status = 'scoring';
+    scheduleSave(); route();
+    return;
+  }
+  if (action === 'next-round'){
+    const num = state.rounds.length + 1;
+    state.rounds.push(newRound(num, state.teamA.players, state.teamB.players));
+    state.currentRound = state.rounds.length - 1;
+    scheduleSave(); route();
+    return;
+  }
+});
+
+app.addEventListener('change', (e)=>{
+  const el = e.target;
+  if (el.dataset.action === 'pick-defender'){
+    const round = curRound();
+    const side = el.dataset.side, player = el.dataset.player;
+    const nom = side==='a' ? round.chunk.nomA : round.chunk.nomB;
+    nom.defender = player;
+    nom.attackers = nom.attackers.filter(p=>p!==player);
+    scheduleSave(); route();
+    return;
+  }
+  if (el.dataset.action === 'pick-attacker'){
+    const round = curRound();
+    const side = el.dataset.side, player = el.dataset.player;
+    const nom = side==='a' ? round.chunk.nomA : round.chunk.nomB;
+    if (el.checked){
+      if (nom.attackers.length >= 2){ el.checked = false; return; }
+      nom.attackers.push(player);
+    } else {
+      nom.attackers = nom.attackers.filter(p=>p!==player);
+    }
+    scheduleSave(); route();
+    return;
+  }
+  if (el.dataset.action === 'set-scoring'){
+    state.scoringMode = el.value;
+    scheduleSave();
+    return;
+  }
+  if (el.dataset.action === 'set-disposition'){
+    const side = el.dataset.side, idx = parseInt(el.dataset.idx);
+    const team = side==='p' ? teamProfile : (side==='a' ? state.teamA : state.teamB);
+    team.dispositions[idx] = el.value;
+    if (side==='p') scheduleSaveProfile(); else scheduleSave();
+    route();
+    return;
+  }
+  if (el.dataset.action === 'set-matchup'){
+    const side = el.dataset.side, idx = parseInt(el.dataset.idx), disp = el.dataset.disp;
+    const team = side==='p' ? teamProfile : (side==='a' ? state.teamA : state.teamB);
+    if (!team.matchupRatings[idx]) team.matchupRatings[idx] = {};
+    team.matchupRatings[idx][disp] = el.value ? parseInt(el.value) : null;
+    if (side==='p') scheduleSaveProfile(); else scheduleSave();
+    return;
+  }
+});
+
+app.addEventListener('input', (e)=>{
+  const el = e.target;
+  if (el.dataset.bind){
+    if (el.dataset.bind.startsWith('profile.')){
+      setByPath(teamProfile, el.dataset.bind.slice('profile.'.length), el.value);
+      scheduleSaveProfile();
+    } else {
+      setByPath(state, el.dataset.bind, el.value);
+      scheduleSave();
+    }
+    return;
+  }
+  if (el.dataset.bindScore){
+    const round = curRound();
+    const tableId = parseInt(el.dataset.table);
+    const p = round.pairings.find(p=>p.tableId===tableId);
+    if (p){
+      let val = el.value === '' ? null : parseFloat(el.value);
+      if (val != null && !isNaN(val)){
+        if (val > 100){ val = 100; el.value = 100; }
+        else if (val < 0){ val = 0; el.value = 0; }
+      } else if (val != null){
+        val = null; // non-numeric entry, treat as empty
+      }
+      if (el.dataset.bindScore === 'A') p.scoreA = val; else p.scoreB = val;
+      scheduleSave();
+      updateScorePreviews(round, tableId);
+    }
+    return;
+  }
+});
+
+app.addEventListener('keydown', (e)=>{
+  if (e.key === 'Enter' && e.target && e.target.id === 'landing-code'){
+    const btn = document.querySelector('[data-action="join-event"]');
+    if (btn) btn.click();
+  }
+});
+
+/* ---------------- boot ---------------- */
+function notConfiguredHTML(){
+  return `
+  <div class="hud-header"><div class="hud-brand"><span class="bracket">[</span> 8-MAN MATCHUP CONSOLE <span class="bracket">]</span></div></div>
+  <div class="panel landing-card">
+    <div class="eyebrow" style="color:var(--warn);">SETUP NEEDED</div>
+    <h2>Firebase isn't configured yet</h2>
+    <p class="dim" style="font-size:13px;">This page can't save or sync anything until it's connected to a Firebase project. Open this file's source, find the <code>firebaseConfig</code> object near the top of the script, and paste in your own project's values (Firebase console → Project settings → Your apps). Full steps are in the comment right above it.</p>
+    <p class="note">Once that's filled in, reload this page.</p>
+  </div>`;
+}
+(async function init(){
+  if (!firebaseReady){ app.innerHTML = notConfiguredHTML(); return; }
+  try {
+    const last = await storage.get(LAST_CODE_KEY, false);
+    if (last && last.value){
+      const code = JSON.parse(last.value).code;
+      const found = await tryLoad(code);
+      if (found){ route(); return; }
+    }
+  } catch(e){ /* fall through to landing */ }
+  route();
+})();
+</script>
+</body>
+</html>
