@@ -311,15 +311,16 @@ label{display:block;}
    just adds a 30-day expiry — switch to the rule above to
    remove the expiry once you've confirmed everything works).
    ========================================================= */
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
-  projectId: "YOUR_PROJECT",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
-};
+ const firebaseConfig = {
+    apiKey: "AIzaSyDvHxbiPr8tZEar0FJfqKt0_A41rxrguz4",
+    authDomain: "k-teams-project.firebaseapp.com",
+    databaseURL: "https://k-teams-project-default-rtdb.firebaseio.com",
+    projectId: "k-teams-project",
+    storageBucket: "k-teams-project.firebasestorage.app",
+    messagingSenderId: "1058043714195",
+    appId: "1:1058043714195:web:0bf8b9e6937fc213af4b66",
+    measurementId: "G-WX4F3JNWFT"
+  };
 
 let firebaseReady = false;
 let fbDb = null;
