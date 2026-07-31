@@ -837,6 +837,7 @@ function header(){
       ${round ? `<span class="hud-badge mono">ROUND ${round.number}</span>` : ''}
       <span class="hud-badge"><span class="sync-dot" id="sync-dot"></span><span id="sync-label">synced</span></span>
       <button class="btn-ghost" data-action="refresh">⟳ refresh</button>
+      <button class="btn-ghost" data-action="copy-spectator-link">📺 spectator link</button>
       <button class="btn-ghost" data-action="go-home">🏠 all teams &amp; events</button>
       <button class="btn-ghost" data-action="goto-team-profile">team profile</button>
     </div>
@@ -1403,6 +1404,90 @@ function roundTrackerHTML(p){
     }).join('')}
   </div>`;
 }
+
+/* ---------------- spectator (read-only, public) view ---------------- */
+function spectatorRoundTrackerHTML(p){
+  const cur = p.battleRound || 'D';
+  const curIdx = BATTLE_ROUNDS.indexOf(cur);
+  return `<div class="round-tracker">
+    ${BATTLE_ROUNDS.map((r,i)=>{
+      const cls = i===curIdx ? 'current' : (i<curIdx ? 'reached' : '');
+      return `<span class="round-seg ${cls}" style="cursor:default;">${r}</span>`;
+    }).join('')}
+  </div>`;
+}
+function spectatorTableCardHTML(t, round){
+  const p = round.pairings.find(p=>p.tableId===t.id);
+  if (!p){
+    return `<div class="table-card"><div class="tid">T${t.id}</div><div class="mission">${esc(t.label)}</div><div class="empty-tag">unassigned</div></div>`;
+  }
+  const scored = p.scoreA!=null && p.scoreB!=null;
+  return `<div class="table-card filled">
+    <div class="tid">T${t.id}${p.layout?` · L-${esc(p.layout)}`:''}</div>
+    <div class="mission">${esc(t.label)}</div>
+    <div class="matchup">
+      <span class="p a">${esc(p.playerA)}${dispTag('a',p.playerA)}${listLinkHTML('a',p.playerA)}</span>
+      <span class="p b">${esc(p.playerB)}${dispTag('b',p.playerB)}${listLinkHTML('b',p.playerB)}</span>
+    </div>
+    ${scored ? `<div class="note" style="margin-top:6px;">${p.scoreA} — ${p.scoreB}</div>` : spectatorRoundTrackerHTML(p)}
+  </div>`;
+}
+function spectatorBattleGridHTML(round){
+  const cards = state.tables.map(t=>spectatorTableCardHTML(t, round)).join('');
+  return `<div class="panel"><div class="panel-title"><h3>Battle grid</h3><span class="dim mono" style="font-size:11px;">${round.pairings.length}/8 SET</span></div><div class="table-grid">${cards}</div></div>`;
+}
+function spectatorHeaderHTML(){
+  return `
+  <div class="hud-header">
+    <div class="hud-brand"><span class="bracket">[</span> LIVE VIEW <span class="bracket">]</span></div>
+    <div class="hud-meta"><span class="hud-badge mono">AUTO-REFRESHING</span></div>
+  </div>`;
+}
+function spectatorNotFoundHTML(){
+  return spectatorHeaderHTML() + `
+  <div class="panel landing-card">
+    <div class="eyebrow" style="color:var(--warn);">NOT FOUND</div>
+    <h2>No event found for this code</h2>
+    <p class="dim" style="font-size:13px;">Double-check the link, or ask the organizer to confirm the event code.</p>
+  </div>`;
+}
+function spectatorBodyHTML(){
+  const round = curRound();
+  const t = roundTotals(round);
+  let outcomeBlock = '';
+  if (state.scoringMode === 'wtc' && (round.status==='scoring' || round.status==='complete')){
+    outcomeBlock = `
+    <div class="panel" style="text-align:center;background:var(--panel-alt);">
+      <span class="eyebrow">WTC ROUND OUTCOME · 8-PLAYER MARGIN ±${WTC_MARGIN} BP</span>
+      <div style="font-family:var(--font-display);font-size:18px;margin:8px 0;">${outcomeHeadlineHTML(round)}</div>
+      <p class="note" style="margin-top:2px;">${outcomeDetailHTML(round)}</p>
+    </div>`;
+  }
+  return `
+  <div class="panel">
+    <div class="panel-title"><h2>${esc(state.teamA.name)} vs ${esc(state.teamB.name)}</h2><span class="eyebrow">ROUND ${round.number}</span></div>
+    <div class="score-banner">
+      <div class="side a"><div class="big-score">${t.ta}</div><div class="who">${esc(state.teamA.name).toUpperCase()}</div></div>
+      <div class="side b"><div class="big-score">${t.tb}</div><div class="who">${esc(state.teamB.name).toUpperCase()}</div></div>
+    </div>
+  </div>
+  ${outcomeBlock}
+  ${spectatorBattleGridHTML(round)}
+  <p class="note" style="text-align:center;">Updates automatically every 15 seconds.</p>`;
+}
+let spectateCode = null;
+let spectatorTimer = null;
+async function initSpectatorMode(code){
+  spectateCode = code.trim().toUpperCase();
+  const found = await tryLoad(spectateCode);
+  if (!found){ app.innerHTML = spectatorNotFoundHTML(); return; }
+  app.innerHTML = spectatorHeaderHTML() + spectatorBodyHTML();
+  spectatorTimer = setInterval(async ()=>{
+    const ok = await tryLoad(spectateCode);
+    app.innerHTML = ok ? (spectatorHeaderHTML() + spectatorBodyHTML()) : spectatorNotFoundHTML();
+  }, 15000);
+}
+
 function scoringHTML(round){
   const t = roundTotals(round);
   const filled = round.pairings.filter(p=>p.scoreA!=null && p.scoreB!=null).length;
@@ -1545,6 +1630,16 @@ app.addEventListener('click', async (e)=>{
     teamProfile = null; teamProfileCode = null;
     mode = 'event';
     route();
+    return;
+  }
+  if (action === 'copy-spectator-link'){
+    const url = `${window.location.origin}${window.location.pathname}?spectate=${state.code}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      alert(`Spectator link copied:\n${url}\n\nShare this with anyone — no password needed, view-only, no matchup ratings shown.`);
+    } catch(e){
+      prompt('Copy this spectator link:', url);
+    }
     return;
   }
   if (action === 'go-home'){
@@ -1973,6 +2068,12 @@ async function attemptAutoLoad(){
 }
 (async function init(){
   if (!firebaseReady){ app.innerHTML = notConfiguredHTML(); return; }
+  const urlParams = new URLSearchParams(window.location.search);
+  const spectateParam = urlParams.get('spectate');
+  if (spectateParam){
+    await initSpectatorMode(spectateParam);
+    return;
+  }
   authenticated = checkAuth();
   if (!authenticated){ route(); return; }
   await attemptAutoLoad();
