@@ -26,6 +26,11 @@
   --gold-soft:#332c16;
   --good:#4c9f70;
   --warn:#e0883d;
+  --r1:#e2483c;
+  --r2:#e0883d;
+  --r3:#e6c84a;
+  --r4:#4caf6e;
+  --r5:#4a90d6;
   --radius:4px;
   --font-display:'Oswald','Arial Narrow',sans-serif;
   --font-body:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -153,11 +158,27 @@ label{display:block;}
 .matchup-matrix th, .matchup-matrix td{padding:5px 6px;text-align:center;border:1px solid var(--line-soft);}
 .matchup-matrix th{font-family:var(--font-mono);font-size:9px;letter-spacing:.02em;color:var(--text-dim);font-weight:500;}
 .matchup-matrix .matrix-name{text-align:left;font-size:12px;white-space:nowrap;color:var(--text);}
-.matchup-matrix select{width:52px;padding:4px 2px;font-size:12px;background:var(--panel-alt);border:1px solid var(--line);color:var(--text);border-radius:3px;}
+.matchup-matrix select{width:52px;padding:4px 2px;font-size:12px;background:var(--panel-alt);border:1px solid var(--line);color:var(--text);border-radius:3px;font-weight:600;}
+.matchup-matrix select.r1{border-color:var(--r1);color:var(--r1);}
+.matchup-matrix select.r2{border-color:var(--r2);color:var(--r2);}
+.matchup-matrix select.r3{border-color:var(--r3);color:var(--r3);}
+.matchup-matrix select.r4{border-color:var(--r4);color:var(--r4);}
+.matchup-matrix select.r5{border-color:var(--r5);color:var(--r5);}
 .rating-badge{font-family:var(--font-mono);font-size:10px;letter-spacing:.02em;}
-.rating-badge.r1,.rating-badge.r2{color:var(--teamB);}
-.rating-badge.r3{color:var(--gold);}
-.rating-badge.r4,.rating-badge.r5{color:var(--good);}
+.rating-badge.r1{color:var(--r1);}
+.rating-badge.r2{color:var(--r2);}
+.rating-badge.r3{color:var(--r3);}
+.rating-badge.r4{color:var(--r4);}
+.rating-badge.r5{color:var(--r5);}
+.rating-key{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line);}
+.rating-key-row{display:flex;flex-wrap:wrap;gap:14px;margin-top:6px;}
+.rating-key-item{display:flex;align-items:center;gap:6px;font-size:12px;}
+.rating-swatch{width:12px;height:12px;border-radius:2px;display:inline-block;flex-shrink:0;}
+.rating-swatch.r1{background:var(--r1);}
+.rating-swatch.r2{background:var(--r2);}
+.rating-swatch.r3{background:var(--r3);}
+.rating-swatch.r4{background:var(--r4);}
+.rating-swatch.r5{background:var(--r5);}
 .radio-opt{display:flex;align-items:center;gap:6px;font-size:14px;}
 
 /* ---------- war room / draft ---------- */
@@ -826,6 +847,7 @@ function teamProfileBodyHTML(){
     <div class="panel-title"><h3>Matchup ratings</h3></div>
     <p class="note" style="margin-top:0;">1 (bad matchup) to 5 (good matchup) against each Force Disposition you might face. This travels with the profile and can be pulled into any event.</p>
     ${matchupMatrixHTML('p', teamProfile)}
+    ${ratingKeyHTML()}
   </div>
   <div class="panel">
     <div class="panel-title"><h3>Use this profile in an event</h3></div>
@@ -861,7 +883,7 @@ function matchupMatrixHTML(side, team){
     const ratings = team.matchupRatings[i] || {};
     const cells = DISPOSITIONS.map(d=>{
       const val = (ratings[d]!=null) ? ratings[d] : '';
-      return `<td><select data-action="set-matchup" data-side="${side}" data-idx="${i}" data-disp="${esc(d)}">
+      return `<td><select class="${val!==''?'r'+val:''}" data-action="set-matchup" data-side="${side}" data-idx="${i}" data-disp="${esc(d)}">
         <option value=""${val===''?' selected':''}>—</option>
         ${[1,2,3,4,5].map(n=>`<option value="${n}" ${String(val)===String(n)?'selected':''}>${n}</option>`).join('')}
       </select></td>`;
@@ -872,6 +894,15 @@ function matchupMatrixHTML(side, team){
     <thead><tr><th></th>${DISPOSITIONS.map(d=>`<th>${esc(d)}</th>`).join('')}</tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
+}
+function ratingKeyHTML(){
+  const rows = [[1,'0–4'],[2,'5–8'],[3,'9–11'],[4,'12–15'],[5,'16–20']];
+  return `<div class="rating-key">
+    <span class="eyebrow">RATING KEY — EXPECTED BATTLE-POINT DIFFERENTIAL</span>
+    <div class="rating-key-row">
+      ${rows.map(([n,range])=>`<span class="rating-key-item"><span class="rating-swatch r${n}"></span>${n} <span class="dim">(${range} pt diff)</span></span>`).join('')}
+    </div>
+  </div>`;
 }
 function importProfileHTML(){
   const hasTeams = indexCache.teams.length > 0;
@@ -928,6 +959,7 @@ function setupHTML(){
         ${matchupMatrixHTML('b', state.teamB)}
       </div>
     </div>
+    ${ratingKeyHTML()}
   </div>
   <div class="panel">
     <div class="panel-title"><h3>Tables &amp; missions</h3></div>
@@ -1612,6 +1644,7 @@ app.addEventListener('change', (e)=>{
     if (!team.matchupRatings[idx]) team.matchupRatings[idx] = {};
     team.matchupRatings[idx][disp] = el.value ? parseInt(el.value) : null;
     if (side==='p') scheduleSaveProfile(); else scheduleSave();
+    route();
     return;
   }
 });
