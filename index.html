@@ -162,12 +162,20 @@ label{display:block;}
 .matchup-matrix th, .matchup-matrix td{padding:5px 6px;text-align:center;border:1px solid var(--line-soft);}
 .matchup-matrix th{font-family:var(--font-mono);font-size:9px;letter-spacing:.02em;color:var(--text-dim);font-weight:500;}
 .matchup-matrix .matrix-name{text-align:left;font-size:12px;white-space:nowrap;color:var(--text);}
+.matchup-matrix tr.row-highlight{background:var(--gold-soft);}
+.matchup-matrix tr.row-highlight td.matrix-name{color:var(--gold);font-weight:700;border-left:3px solid var(--gold);padding-left:6px;}
 .matchup-matrix select{width:52px;padding:4px 2px;font-size:12px;background:var(--panel-alt);border:1px solid var(--line);color:var(--text);border-radius:3px;font-weight:600;}
-.matchup-matrix select.r1{border-color:var(--r1);color:var(--r1);}
-.matchup-matrix select.r2{border-color:var(--r2);color:var(--r2);}
-.matchup-matrix select.r3{border-color:var(--r3);color:var(--r3);}
-.matchup-matrix select.r4{border-color:var(--r4);color:var(--r4);}
-.matchup-matrix select.r5{border-color:var(--r5);color:var(--r5);}
+.matchup-matrix select.r1{background:var(--r1);border-color:var(--r1);color:#fff;}
+.matchup-matrix select.r2{background:var(--r2);border-color:var(--r2);color:#fff;}
+.matchup-matrix select.r3{background:var(--r3);border-color:var(--r3);color:#1a1e29;}
+.matchup-matrix select.r4{background:var(--r4);border-color:var(--r4);color:#fff;}
+.matchup-matrix select.r5{background:var(--r5);border-color:var(--r5);color:#fff;}
+.rating-cell{display:block;width:100%;padding:4px 2px;border-radius:3px;font-weight:700;text-align:center;font-family:var(--font-mono);font-size:12px;}
+.rating-cell.r1{background:var(--r1);color:#fff;}
+.rating-cell.r2{background:var(--r2);color:#fff;}
+.rating-cell.r3{background:var(--r3);color:#1a1e29;}
+.rating-cell.r4{background:var(--r4);color:#fff;}
+.rating-cell.r5{background:var(--r5);color:#fff;}
 .rating-badge{font-family:var(--font-mono);font-size:10px;letter-spacing:.02em;}
 .rating-badge.r1{color:var(--r1);}
 .rating-badge.r2{color:var(--r2);}
@@ -245,6 +253,11 @@ label{display:block;}
   display:flex;justify-content:space-between;align-items:center;gap:8px;
 }
 .atk-card button{white-space:nowrap;}
+.atk-card.r1{border-color:var(--r1);background:linear-gradient(90deg, rgba(226,72,60,.16), transparent);}
+.atk-card.r2{border-color:var(--r2);background:linear-gradient(90deg, rgba(224,136,61,.16), transparent);}
+.atk-card.r3{border-color:var(--r3);background:linear-gradient(90deg, rgba(230,200,74,.16), transparent);}
+.atk-card.r4{border-color:var(--r4);background:linear-gradient(90deg, rgba(76,175,110,.16), transparent);}
+.atk-card.r5{border-color:var(--r5);background:linear-gradient(90deg, rgba(74,144,214,.16), transparent);}
 .atk-card.chosen{border-color:var(--good);background:linear-gradient(90deg, rgba(76,159,112,.12), transparent);}
 .atk-card .stamp{font-family:var(--font-mono);font-size:10px;letter-spacing:.08em;color:var(--good);border:1px solid var(--good);padding:2px 6px;border-radius:2px;}
 .atk-card.faded{opacity:.4;}
@@ -281,6 +294,15 @@ label{display:block;}
 .score-row .tlabel{font-family:var(--font-mono);font-size:11px;color:var(--gold);}
 .score-vs{font-family:var(--font-display);color:var(--text-dim);text-align:center;}
 .pts-preview{font-family:var(--font-mono);font-size:11px;color:var(--text-dim);text-align:right;}
+.round-tracker{display:flex;gap:3px;grid-column:1 / -1;margin-top:4px;}
+.round-seg{
+  flex:1;text-align:center;font-family:var(--font-mono);font-size:10px;padding:4px 2px;
+  border:1px solid var(--line);border-radius:2px;background:var(--panel-alt);color:var(--text-dim);
+  cursor:pointer;transition:background .15s,border-color .15s,color .15s;
+}
+.round-seg:hover{border-color:var(--gold);color:var(--text);}
+.round-seg.reached{border-color:var(--gold-soft);background:var(--gold-soft);color:var(--gold);}
+.round-seg.current{border-color:var(--gold);background:var(--gold);color:#181307;font-weight:700;}
 
 /* ---------- standings ---------- */
 .standings-row{
@@ -580,6 +602,24 @@ function migrateState(){
     if (team && !team.matchupRatings) team.matchupRatings = blankMatchupRatings();
     if (team && !team.bcpLinks) team.bcpLinks = Array(8).fill('');
   });
+  (state.rounds||[]).forEach(round=>{
+    (round.pairings||[]).forEach(p=>{ if (!p.battleRound) p.battleRound = 'D'; });
+  });
+  // Repair a bug where a round's starting pool could get seeded with placeholder
+  // names before the real roster was entered. Only touches it when nothing has
+  // been decided yet for that round (no pairings, no picks in progress), so this
+  // can never overwrite real progress — only ever fixes a round that's still
+  // showing the original placeholder names.
+  if (state.setupComplete){
+    const round = state.rounds[state.currentRound];
+    const c = round && round.chunk;
+    if (round && round.status === 'drafting' && round.pairings.length === 0 && c
+        && !c.nomA.defender && !c.nomB.defender
+        && c.nomA.attackers.length === 0 && c.nomB.attackers.length === 0){
+      if (round.poolA.some(p => !state.teamA.players.includes(p))) round.poolA = [...state.teamA.players];
+      if (round.poolB.some(p => !state.teamB.players.includes(p))) round.poolB = [...state.teamB.players];
+    }
+  }
 }
 
 /* ---------------- model ---------------- */
@@ -696,7 +736,7 @@ function newEvent(code){
 }
 function freshChunk(){
   return {
-    phase: 'nominate',
+    phase: 'nominateDefenders',
     nomA: { defender: null, attackers: [] },
     nomB: { defender: null, attackers: [] },
     acceptForA: null,
@@ -993,13 +1033,15 @@ function linkedRosterRowHTML(side, name, idx){
     <div class="linked-field" style="flex:0 0 138px;justify-content:center;">${esc(disp||'—')}</div>
   </div>`;
 }
-function matchupMatrixReadOnlyHTML(side, team){
-  const rows = team.players.map((p)=>{
+function matchupMatrixReadOnlyHTML(side, team, playersOverride, highlightPlayer){
+  const players = playersOverride || team.players;
+  const rows = players.map((p)=>{
     const cells = DISPOSITIONS.map(d=>{
       const val = getMatchupRating(side, p, d);
-      return `<td>${val!=null ? `<span class="rating-badge r${val}" style="font-weight:700;">${val}</span>` : '<span class="dim">—</span>'}</td>`;
+      return `<td>${val!=null ? `<span class="rating-cell r${val}">${val}</span>` : '<span class="dim">—</span>'}</td>`;
     }).join('');
-    return `<tr><td class="matrix-name">${esc(p)}</td>${cells}</tr>`;
+    const isHighlighted = highlightPlayer && p === highlightPlayer;
+    return `<tr class="${isHighlighted ? 'row-highlight' : ''}"><td class="matrix-name">${esc(p)}</td>${cells}</tr>`;
   }).join('');
   return `<div class="matrix-scroll"><table class="matchup-matrix">
     <thead><tr><th></th>${DISPOSITIONS.map(d=>`<th>${esc(d)}</th>`).join('')}</tr></thead>
@@ -1035,17 +1077,9 @@ function setupHTML(){
   </div>
   <div class="panel">
     <div class="panel-title"><h3>Matchup ratings</h3></div>
-    <p class="note" style="margin-top:0;">Each player rates their own confidence facing each Force Disposition — 1 (bad matchup) to 5 (good matchup). These show up as a badge next to each candidate during pairing, to help the defending captain pick.</p>
-    <div class="two-col">
-      <div>
-        <div class="side-title a" style="margin-bottom:8px;"><span class="swatch"></span>${esc(state.teamA.name)}${aLinked?' <span class="mono dim" style="font-size:10px;">🔗 synced</span>':''}</div>
-        ${aLinked ? matchupMatrixReadOnlyHTML('a', state.teamA) : matchupMatrixHTML('a', state.teamA)}
-      </div>
-      <div>
-        <div class="side-title b" style="margin-bottom:8px;"><span class="swatch"></span>${esc(state.teamB.name)}${bLinked?' <span class="mono dim" style="font-size:10px;">🔗 synced</span>':''}</div>
-        ${bLinked ? matchupMatrixReadOnlyHTML('b', state.teamB) : matchupMatrixHTML('b', state.teamB)}
-      </div>
-    </div>
+    <p class="note" style="margin-top:0;">Each ${esc(state.teamA.name)} player rates their own confidence facing each Force Disposition — 1 (bad matchup) to 5 (good matchup). These show up as a badge next to each candidate during pairing, to help your captain pick. Only your own team's ratings are collected here.</p>
+    <div class="side-title a" style="margin-bottom:8px;"><span class="swatch"></span>${esc(state.teamA.name)}${aLinked?' <span class="mono dim" style="font-size:10px;">🔗 synced</span>':''}</div>
+    ${aLinked ? matchupMatrixReadOnlyHTML('a', state.teamA) : matchupMatrixHTML('a', state.teamA)}
     ${ratingKeyHTML()}
   </div>
   <div class="panel">
@@ -1071,7 +1105,8 @@ function setupHTML(){
 function draftHTML(round){
   const c = round.chunk;
   let body = '';
-  if (c.phase === 'nominate') body = nominateHTML(round);
+  if (c.phase === 'nominateDefenders') body = nominateDefendersHTML(round);
+  else if (c.phase === 'nominateAttackers') body = nominateAttackersHTML(round);
   else if (c.phase === 'acceptRefuse') body = acceptRefuseHTML(round);
   else if (c.phase === 'assignTables') body = assignTablesHTML(round);
   else if (c.phase === 'finalTables') body = finalTablesHTML(round);
@@ -1083,7 +1118,18 @@ function draftHTML(round){
     </div>
     ${body}
   </div>
+  ${ourMatrixPreviewHTML(round)}
   ${tableGridHTML(round)}`;
+}
+function ourMatrixPreviewHTML(round){
+  const remaining = round.poolA;
+  const total = state.teamA.players.length;
+  const pendingDefender = round.chunk.phase === 'nominateDefenders' ? round.chunk.nomA.defender : null;
+  return `<div class="panel">
+    <div class="panel-title"><h3>📊 ${esc(state.teamA.name)}'s matchup matrix</h3><span class="dim mono" style="font-size:11px;">${remaining.length} OF ${total} REMAINING</span></div>
+    ${remaining.length ? matchupMatrixReadOnlyHTML('a', state.teamA, remaining, pendingDefender) : '<p class="note" style="margin-top:0;">All your players are paired for this round.</p>'}
+    ${ratingKeyHTML()}
+  </div>`;
 }
 function sectionName(round){
   const n = Math.floor(round.pairings.length/2) + 1;
@@ -1092,61 +1138,84 @@ function sectionName(round){
 
 function phaseLabel(phase){
   return {
-    nominate: 'NOMINATE DEFENDER + 2 ATTACKERS (EACH TEAM)',
+    nominateDefenders: "PICK EACH TEAM'S DEFENDER",
+    nominateAttackers: "PICK EACH TEAM'S 2 ATTACKERS",
     acceptRefuse: 'ACCEPT ONE ATTACKER, REFUSE THE OTHER',
     assignTables: 'DEFENDERS CLAIM A TABLE + LAYOUT',
     finalTables: 'ASSIGN THE LAST TWO TABLES + LAYOUTS'
   }[phase] || '';
 }
 
-function nominateHTML(round){
+function nominateDefendersHTML(round){
   const c = round.chunk;
   return `
   <div class="warroom">
-    ${sidePoolHTML('a', state.teamA.name, round.poolA, c.nomA)}
-    ${sidePoolHTML('b', state.teamB.name, round.poolB, c.nomB)}
+    ${sideDefenderPoolHTML('a', state.teamA.name, round.poolA, c.nomA)}
+    ${sideDefenderPoolHTML('b', state.teamB.name, round.poolB, c.nomB)}
   </div>
-  ${nominationStatusHTML(round)}
   <div class="btn-row">
-    <button class="btn btn-primary" data-action="confirm-nominations" ${nominationsValid(round)?'':'disabled'}>Confirm nominations →</button>
-  </div>
-  <div id="nom-error" class="error-text"></div>`;
+    <button class="btn btn-primary" data-action="confirm-defenders" ${c.nomA.defender && c.nomB.defender ? '' : 'disabled'}>Confirm defenders →</button>
+  </div>`;
 }
-function nominationStatusHTML(round){
-  const c = round.chunk;
-  const missing = [];
-  [['a', state.teamA.name, c.nomA], ['b', state.teamB.name, c.nomB]].forEach(([side, name, nom])=>{
-    if (!nom.defender) missing.push(`${esc(name)}: pick a defender`);
-    if (nom.attackers.length < 2) missing.push(`${esc(name)}: pick ${2-nom.attackers.length} more attacker${2-nom.attackers.length>1?'s':''}`);
-  });
-  if (!missing.length) return `<p class="note" style="color:var(--good);">✓ Ready — both teams have a defender and 2 attackers picked.</p>`;
-  return `<p class="note">Still needed: ${missing.join(' · ')}</p>`;
-}
-function nominationsValid(round){
-  const c = round.chunk;
-  return c.nomA.defender && c.nomA.attackers.length===2 && c.nomB.defender && c.nomB.attackers.length===2;
-}
-function sidePoolHTML(side, name, pool, nom){
+function sideDefenderPoolHTML(side, name, pool, nom){
   return `
   <div class="side-panel ${side}">
     <div class="side-title ${side}"><span class="swatch"></span>${esc(name)}<span class="pool-count">${pool.length} in pool</span></div>
     <div class="pool-list">
       ${pool.map(p=>{
         const isDef = nom.defender === p;
-        const isAtk = nom.attackers.includes(p);
         return `<div class="pool-item">
           <label style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;">
             <input type="radio" name="def-${side}" data-action="pick-defender" data-side="${side}" data-player="${esc(p)}" ${isDef?'checked':''}>
             <span>${esc(p)}${dispTag(side,p)}</span>
           </label>
           ${listLinkHTML(side,p)}
-          <label style="margin-left:auto;display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-dim);flex-shrink:0;">
-            <input type="checkbox" data-action="pick-attacker" data-side="${side}" data-player="${esc(p)}" ${isAtk?'checked':''} ${isDef?'disabled':''}> atk
-          </label>
         </div>`;
       }).join('')}
     </div>
   </div>`;
+}
+
+function nominateAttackersHTML(round){
+  const c = round.chunk;
+  return `
+  <div class="note" style="margin-bottom:12px;">Defenders locked in: <b style="color:var(--teamA)">${esc(c.nomA.defender)}</b>${dispTag('a',c.nomA.defender)} vs <b style="color:var(--teamB)">${esc(c.nomB.defender)}</b>${dispTag('b',c.nomB.defender)}</div>
+  <div class="warroom">
+    ${sideAttackerPoolHTML('a', state.teamA.name, round.poolA, c.nomA)}
+    ${sideAttackerPoolHTML('b', state.teamB.name, round.poolB, c.nomB)}
+  </div>
+  ${nominationStatusHTML(round)}
+  <div class="btn-row">
+    <button class="btn btn-primary" data-action="confirm-attackers" ${c.nomA.attackers.length===2 && c.nomB.attackers.length===2 ? '' : 'disabled'}>Confirm attackers →</button>
+  </div>`;
+}
+function sideAttackerPoolHTML(side, name, pool, nom){
+  const candidates = pool.filter(p=>p!==nom.defender);
+  return `
+  <div class="side-panel ${side}">
+    <div class="side-title ${side}"><span class="swatch"></span>${esc(name)}<span class="pool-count">${candidates.length} available</span></div>
+    <div class="pool-list">
+      ${candidates.map(p=>{
+        const isAtk = nom.attackers.includes(p);
+        return `<div class="pool-item">
+          <label style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;">
+            <input type="checkbox" data-action="pick-attacker" data-side="${side}" data-player="${esc(p)}" ${isAtk?'checked':''}>
+            <span>${esc(p)}${dispTag(side,p)}</span>
+          </label>
+          ${listLinkHTML(side,p)}
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+function nominationStatusHTML(round){
+  const c = round.chunk;
+  const missing = [];
+  [['a', state.teamA.name, c.nomA], ['b', state.teamB.name, c.nomB]].forEach(([side, name, nom])=>{
+    if (nom.attackers.length < 2) missing.push(`${esc(name)}: pick ${2-nom.attackers.length} more attacker${2-nom.attackers.length>1?'s':''}`);
+  });
+  if (!missing.length) return `<p class="note" style="color:var(--good);">✓ Ready — both teams have 2 attackers picked.</p>`;
+  return `<p class="note">Still needed: ${missing.join(' · ')}</p>`;
 }
 
 function champPreviewHTML(round){
@@ -1195,7 +1264,7 @@ function atkCardHTML(player, chosen, field, side, defSide, defName){
   const isChosen = chosen === player;
   const otherChosen = chosen && !isChosen;
   const rating = getMatchupRating(defSide, defName, getDisposition(side, player));
-  return `<div class="atk-card ${isChosen?'chosen':''} ${otherChosen?'faded':''}">
+  return `<div class="atk-card ${rating!=null?'r'+rating:''} ${isChosen?'chosen':''} ${otherChosen?'faded':''}">
     <span>${esc(player)}${dispTag(side, player)}${listLinkHTML(side, player)}${rating!=null?`<br>${ratingBadgeHTML(rating)}`:''}</span>
     ${isChosen ? `<span class="stamp">ACCEPTED</span>` : `<button class="btn btn-ghost" data-action="choose-attacker" data-field="${field}" data-player="${esc(player)}">Accept</button>`}
   </div>`;
@@ -1279,6 +1348,28 @@ function ptsPreviewHTML(p){
   const diff = Math.abs((p.scoreA||0)-(p.scoreB||0));
   return `Δ${diff} → ${pts[0]}–${pts[1]}`;
 }
+const WTC_MARGIN = 12; // 8-player team win margin, per the 11th ed Teams Event Companion
+function roundOutcome(round){
+  const t = roundTotals(round);
+  const diff = t.ta - t.tb;
+  const outcome = diff >= WTC_MARGIN ? 'A' : diff <= -WTC_MARGIN ? 'B' : 'DRAW';
+  return { diff, outcome, ta: t.ta, tb: t.tb };
+}
+function outcomeHeadlineHTML(round){
+  const { diff, outcome } = roundOutcome(round);
+  const color = outcome==='A' ? 'var(--teamA)' : outcome==='B' ? 'var(--teamB)' : 'var(--gold)';
+  const label = outcome==='A' ? `${esc(state.teamA.name)} WIN` : outcome==='B' ? `${esc(state.teamB.name)} WIN` : 'DRAW';
+  const leadText = diff===0 ? 'Tied' : diff>0 ? `${esc(state.teamA.name)} +${diff}` : `${esc(state.teamB.name)} +${-diff}`;
+  return `<span style="color:${color};">${leadText} — currently a ${label}</span>`;
+}
+function outcomeDetailHTML(round){
+  const { diff } = roundOutcome(round);
+  const aNeeds = Math.max(0, WTC_MARGIN - diff);
+  const bNeeds = Math.max(0, WTC_MARGIN + diff);
+  const aLine = aNeeds===0 ? `${esc(state.teamA.name)} have already secured the win margin.` : `${esc(state.teamA.name)} need the gap to move ${aNeeds} more their way to lock in a win.`;
+  const bLine = bNeeds===0 ? `${esc(state.teamB.name)} have already secured the win margin.` : `${esc(state.teamB.name)} need the gap to move ${bNeeds} more their way to lock in a win.`;
+  return `${aLine}<br>${bLine}<br>A margin of 11 or less either way ends the round in a draw.`;
+}
 function updateScorePreviews(round, changedTableId){
   if (changedTableId != null){
     const p = round.pairings.find(p=>p.tableId===changedTableId);
@@ -1295,6 +1386,22 @@ function updateScorePreviews(round, changedTableId){
   if (elNote) elNote.textContent = filled === round.pairings.length
     ? 'all tables entered — ready to submit'
     : `projected from ${filled}/${round.pairings.length} tables entered`;
+  const elHeadline = document.getElementById('outcome-headline');
+  const elDetail = document.getElementById('outcome-detail');
+  if (elHeadline) elHeadline.innerHTML = outcomeHeadlineHTML(round);
+  if (elDetail) elDetail.innerHTML = outcomeDetailHTML(round);
+}
+const BATTLE_ROUNDS = ['D','1','2','3','4','5','F'];
+function roundTrackerHTML(p){
+  const cur = p.battleRound || 'D';
+  const curIdx = BATTLE_ROUNDS.indexOf(cur);
+  return `<div class="round-tracker">
+    ${BATTLE_ROUNDS.map((r,i)=>{
+      const cls = i===curIdx ? 'current' : (i<curIdx ? 'reached' : '');
+      const title = r==='D' ? 'Deployment' : r==='F' ? 'Finished' : `Battle Round ${r}`;
+      return `<button type="button" class="round-seg ${cls}" data-action="set-battle-round" data-table="${p.tableId}" data-round="${r}" title="${title}">${r}</button>`;
+    }).join('')}
+  </div>`;
 }
 function scoringHTML(round){
   const t = roundTotals(round);
@@ -1308,6 +1415,7 @@ function scoringHTML(round){
       <input type="number" min="0" max="100" data-bind-score="B" data-table="${p.tableId}" value="${p.scoreB==null?'':p.scoreB}" placeholder="VP">
       <div class="pname b">${esc(p.playerB)}${dispTag('b',p.playerB)}${listLinkHTML('b',p.playerB)}</div>
       <div class="pts-preview" id="pts-${p.tableId}">${ptsPreviewHTML(p)}</div>
+      ${roundTrackerHTML(p)}
     </div>`;
   }).join('');
   return `
@@ -1318,6 +1426,12 @@ function scoringHTML(round){
       <div class="side b"><div class="big-score" id="live-total-b">${t.tb}</div><div class="who">${esc(state.teamB.name).toUpperCase()}</div></div>
     </div>
     <p class="note" id="live-total-note" style="text-align:center;margin-top:-6px;">${filled===round.pairings.length ? 'all tables entered — ready to submit' : `projected from ${filled}/${round.pairings.length} tables entered`}</p>
+    ${state.scoringMode==='wtc' ? `
+    <div class="panel" id="round-outcome-panel" style="text-align:center;background:var(--panel-alt);margin-top:14px;">
+      <span class="eyebrow">WTC ROUND OUTCOME · 8-PLAYER MARGIN ±${WTC_MARGIN} BP</span>
+      <div id="outcome-headline" style="font-family:var(--font-display);font-size:18px;margin:8px 0;">${outcomeHeadlineHTML(round)}</div>
+      <p class="note" id="outcome-detail" style="margin-top:2px;">${outcomeDetailHTML(round)}</p>
+    </div>` : ''}
     <div class="score-row" style="border-bottom:1px solid var(--line);font-family:var(--font-mono);font-size:11px;color:var(--text-dim);">
       <div>TABLE</div><div>${esc(state.teamA.name)}</div><div>VP</div><div>VP</div><div>${esc(state.teamB.name)}</div><div>PTS</div>
     </div>
@@ -1393,15 +1507,15 @@ function afterChunkConfirmed(round){
     const leftoverA = round.poolA.find(p=>p!==refusedA) || round.poolA[0];
     const leftoverB = round.poolB.find(p=>p!==refusedB) || round.poolB[0];
     nextChunk.confirmed = [
-      { playerA: refusedA, playerB: refusedB, defenderSide:'final', tableId:null, layout:null, scoreA:null, scoreB:null },
-      { playerA: leftoverA, playerB: leftoverB, defenderSide:'final', tableId:null, layout:null, scoreA:null, scoreB:null }
+      { playerA: refusedA, playerB: refusedB, defenderSide:'final', tableId:null, layout:null, scoreA:null, scoreB:null, battleRound:'D' },
+      { playerA: leftoverA, playerB: leftoverB, defenderSide:'final', tableId:null, layout:null, scoreA:null, scoreB:null, battleRound:'D' }
     ];
     nextChunk.phase = 'finalTables';
     round.poolA = []; round.poolB = [];
   } else if (round.poolA.length === 0){
     round.status = 'scoring';
   } else {
-    nextChunk.phase = 'nominate';
+    nextChunk.phase = 'nominateDefenders';
   }
   round.chunk = nextChunk;
 }
@@ -1625,6 +1739,11 @@ app.addEventListener('click', async (e)=>{
   }
   if (action === 'finish-setup'){
     state.setupComplete = true;
+    // round 1 was seeded with placeholder names when the event was first created,
+    // before the real roster existed — refresh it now with the actual roster
+    const round1 = state.rounds[0];
+    round1.poolA = [...state.teamA.players];
+    round1.poolB = [...state.teamB.players];
     scheduleSave();
     route();
     return;
@@ -1656,18 +1775,27 @@ app.addEventListener('click', async (e)=>{
     scheduleSave(); route();
     return;
   }
-  if (action === 'confirm-nominations'){
+  if (action === 'confirm-defenders'){
     const round = curRound();
-    if (!nominationsValid(round)) return;
-    round.chunk.phase = 'acceptRefuse';
+    const c = round.chunk;
+    if (!c.nomA.defender || !c.nomB.defender) return;
+    c.phase = 'nominateAttackers';
+    scheduleSave(); route();
+    return;
+  }
+  if (action === 'confirm-attackers'){
+    const round = curRound();
+    const c = round.chunk;
+    if (c.nomA.attackers.length!==2 || c.nomB.attackers.length!==2) return;
+    c.phase = 'acceptRefuse';
     scheduleSave(); route();
     return;
   }
   if (action === 'confirm-accept-refuse'){
     const round = curRound();
     const c = round.chunk;
-    const pairing1 = { playerA: c.nomA.defender, playerB: c.acceptForA, defenderSide:'A', tableId:null, layout:null, scoreA:null, scoreB:null };
-    const pairing2 = { playerA: c.acceptForB, playerB: c.nomB.defender, defenderSide:'B', tableId:null, layout:null, scoreA:null, scoreB:null };
+    const pairing1 = { playerA: c.nomA.defender, playerB: c.acceptForA, defenderSide:'A', tableId:null, layout:null, scoreA:null, scoreB:null, battleRound:'D' };
+    const pairing2 = { playerA: c.acceptForB, playerB: c.nomB.defender, defenderSide:'B', tableId:null, layout:null, scoreA:null, scoreB:null, battleRound:'D' };
     // remove the defender + accepted attacker from each pool; the refused attacker was
     // never removed from the pool in the first place, so it's already back where it belongs
     round.poolA = round.poolA.filter(p=>p!==c.nomA.defender && p!==c.acceptForB);
@@ -1691,6 +1819,17 @@ app.addEventListener('click', async (e)=>{
     round.status = 'scoring';
     round.chunk = freshChunk();
     scheduleSave(); route();
+    return;
+  }
+  if (action === 'set-battle-round'){
+    const round = curRound();
+    const tableId = parseInt(el.dataset.table);
+    const p = round.pairings.find(p=>p.tableId===tableId);
+    if (p){
+      p.battleRound = el.dataset.round;
+      scheduleSave();
+      route();
+    }
     return;
   }
   if (action === 'submit-scores'){
