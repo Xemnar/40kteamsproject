@@ -284,10 +284,11 @@ label{display:block;}
 
 /* ---------- scoring ---------- */
 .score-row{
-  display:grid;grid-template-columns:50px 1fr 55px 55px 1fr 60px;gap:10px;align-items:center;
+  display:grid;grid-template-columns:50px 1fr 78px 78px 1fr 60px;gap:10px;align-items:center;
   padding:10px 0;border-bottom:1px solid var(--line-soft);
 }
 @media(max-width:640px){.score-row{grid-template-columns:1fr;gap:6px;}}
+.score-row input[type=number]{font-size:17px;font-weight:600;padding:10px 6px;text-align:center;}
 .score-row .pname{font-size:13px;}
 .score-row .pname.a{color:var(--teamA);}
 .score-row .pname.b{color:var(--teamB);}
@@ -1429,7 +1430,8 @@ function spectatorTableCardHTML(t, round){
       <span class="p a">${esc(p.playerA)}${dispTag('a',p.playerA)}${listLinkHTML('a',p.playerA)}</span>
       <span class="p b">${esc(p.playerB)}${dispTag('b',p.playerB)}${listLinkHTML('b',p.playerB)}</span>
     </div>
-    ${scored ? `<div class="note" style="margin-top:6px;">${p.scoreA} — ${p.scoreB}</div>` : spectatorRoundTrackerHTML(p)}
+    ${spectatorRoundTrackerHTML(p)}
+    ${scored ? `<div class="note" style="margin-top:6px;">${p.scoreA} — ${p.scoreB}</div>` : ''}
   </div>`;
 }
 function spectatorBattleGridHTML(round){
