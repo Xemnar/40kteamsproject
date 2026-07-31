@@ -131,8 +131,14 @@ label{display:block;}
 .roster-row{display:flex;gap:6px;flex-wrap:wrap;}
 .roster-row input.player-name{flex:1.3;min-width:90px;}
 .roster-row input.player-faction{flex:1;min-width:80px;}
+.roster-row input.player-bcplink{flex:1.2;min-width:100px;}
 .roster-row select{flex:0 0 138px;font-size:12px;padding:8px 6px;}
 @media(max-width:520px){.roster-row select{flex:1 1 100%;}}
+.list-link{
+  font-family:var(--font-mono);font-size:10px;color:var(--gold);text-decoration:none;
+  border:1px solid var(--line);border-radius:2px;padding:1px 5px;white-space:nowrap;
+}
+.list-link:hover{border-color:var(--gold);text-decoration:underline;}
 .team-block{border-radius:var(--radius);padding:14px;border:1px solid var(--line);}
 .team-block.a{border-color:var(--teamA-line);background:linear-gradient(180deg, var(--teamA-soft) 0%, transparent 60px);}
 .team-block.b{border-color:var(--teamB-line);background:linear-gradient(180deg, var(--teamB-soft) 0%, transparent 60px);}
@@ -271,6 +277,19 @@ label{display:block;}
 
 .note{font-size:12px;color:var(--text-dim);margin-top:10px;}
 .landing-card{max-width:420px;margin:60px auto 0;}
+.pick-list{display:flex;flex-direction:column;gap:6px;margin-top:6px;}
+.pick-row{display:flex;gap:6px;align-items:stretch;}
+.pick-btn{
+  flex:1;display:flex;justify-content:space-between;align-items:center;gap:10px;
+  background:var(--panel-alt);border:1px solid var(--line);color:var(--text);
+  border-radius:var(--radius);padding:10px 12px;font-size:14px;text-align:left;
+  transition:border-color .15s;
+}
+.pick-btn:hover{border-color:var(--gold);}
+.pick-name{font-weight:500;}
+.pick-code{font-size:11px;color:var(--text-dim);letter-spacing:.06em;}
+.pick-del{flex:0 0 auto;font-size:14px;padding:6px 10px;}
+.pick-del:hover{color:var(--teamB);border-color:var(--teamB);}
 .error-text{color:var(--teamB);font-size:12px;margin-top:6px;}
 
 @media (prefers-reduced-motion: reduce){
@@ -290,37 +309,30 @@ label{display:block;}
    ========================================================= */
 
 /* =========================================================
-   FIREBASE SETUP — do this once, it takes about 5 minutes
-   1. Go to https://console.firebase.google.com → "Add project"
-      (free tier — no credit card needed).
-   2. In your new project: Build → Realtime Database → Create
-      Database → start in "test mode" (or see the rules note
-      below for something a bit safer than wide open).
-   3. Project settings (gear icon) → General → "Your apps" →
-      the </> (web) icon → register an app (no Hosting needed)
-      → copy the firebaseConfig object it shows you → paste it
-      in place of the placeholder below.
-   4. Re-upload this file wherever you're hosting it.
+   FIREBASE — already configured for the k-teams-project Firebase
+   project. If you ever need to point this at a different Firebase
+   project, replace the object below with that project's config
+   (Firebase console → Project settings → Your apps → the </> icon).
 
-   Security rules note: with the config below, anyone who has
-   your databaseURL can read/write it — same trust model as the
-   event/team codes already have (the code is the only gate).
-   For a bit more safety, in Realtime Database → Rules, use:
+   Security rules note: anyone who has your databaseURL can read/
+   write it — same trust model as the event/team codes (the code
+   is the only gate), now paired with the app's password screen.
+   Your Realtime Database is currently in "test mode," which stops
+   accepting writes after 30 days unless you update the rules.
+   When you get to it, in Realtime Database → Rules, use:
      { "rules": { ".read": true, ".write": true } }
-   which is what "test mode" gives you by default (test mode
-   just adds a 30-day expiry — switch to the rule above to
-   remove the expiry once you've confirmed everything works).
+   to remove that expiry — no rush, it works fine as-is until then.
    ========================================================= */
- const firebaseConfig = {
-    apiKey: "AIzaSyDvHxbiPr8tZEar0FJfqKt0_A41rxrguz4",
-    authDomain: "k-teams-project.firebaseapp.com",
-    databaseURL: "https://k-teams-project-default-rtdb.firebaseio.com",
-    projectId: "k-teams-project",
-    storageBucket: "k-teams-project.firebasestorage.app",
-    messagingSenderId: "1058043714195",
-    appId: "1:1058043714195:web:0bf8b9e6937fc213af4b66",
-    measurementId: "G-WX4F3JNWFT"
-  };
+const firebaseConfig = {
+  apiKey: "AIzaSyDvHxbiPr8tZEar0FJfqKt0_A41rxrguz4",
+  authDomain: "k-teams-project.firebaseapp.com",
+  databaseURL: "https://k-teams-project-default-rtdb.firebaseio.com",
+  projectId: "k-teams-project",
+  storageBucket: "k-teams-project.firebasestorage.app",
+  messagingSenderId: "1058043714195",
+  appId: "1:1058043714195:web:0bf8b9e6937fc213af4b66",
+  measurementId: "G-WX4F3JNWFT"
+};
 
 let firebaseReady = false;
 let fbDb = null;
@@ -374,6 +386,11 @@ const STORAGE_PREFIX = 'wtc8-event-';
 const LAST_CODE_KEY = 'wtc8-last-code';
 const TEAM_PREFIX = 'wtc8-team-';
 const LAST_TEAM_CODE_KEY = 'wtc8-last-team-code';
+const INDEX_KEY = 'wtc8-index';
+// Simple client-side gate, not real security — the password lives in this
+// file's source, so anyone who views source can read it. It's meant to keep
+// the app off casual/accidental visitors' radar, not to stop a determined one.
+const APP_PASSWORD = 'teamchimera';
 
 let state = null;
 let currentCode = null;
@@ -383,6 +400,8 @@ let teamProfile = null;
 let teamProfileCode = null;
 let profileSaveTimer = null;
 let mode = 'event'; // 'event' | 'team'
+let authenticated = false;
+let indexCache = { teams: [], events: [] };
 
 const app = document.getElementById('app');
 
@@ -404,6 +423,45 @@ function setSync(status){
   if (lbl) lbl.textContent = status==='busy' ? 'saving…' : status==='err' ? 'save failed' : 'synced';
 }
 
+/* ---------------- auth ---------------- */
+function checkAuth(){
+  try { return sessionStorage.getItem('wtc8-authed') === 'true'; } catch(e){ return false; }
+}
+function setAuthed(){
+  try { sessionStorage.setItem('wtc8-authed', 'true'); } catch(e){ /* non-fatal */ }
+  authenticated = true;
+}
+
+/* ---------------- shared index (list of all teams & events) ---------------- */
+async function loadIndex(){
+  try {
+    const res = await storage.get(INDEX_KEY, true);
+    if (res && res.value) return JSON.parse(res.value);
+  } catch(e){ /* none yet */ }
+  return { teams: [], events: [] };
+}
+async function refreshIndex(){
+  indexCache = await loadIndex();
+}
+async function upsertIndexEntry(kind, entry){
+  try {
+    const idx = await loadIndex();
+    if (!idx[kind]) idx[kind] = [];
+    const i = idx[kind].findIndex(x=>x.code===entry.code);
+    if (i>=0) idx[kind][i] = entry; else idx[kind].push(entry);
+    await storage.set(INDEX_KEY, JSON.stringify(idx), true);
+    indexCache = idx;
+  } catch(e){ /* non-fatal */ }
+}
+async function removeIndexEntry(kind, code){
+  try {
+    const idx = await loadIndex();
+    idx[kind] = (idx[kind]||[]).filter(x=>x.code!==code);
+    await storage.set(INDEX_KEY, JSON.stringify(idx), true);
+    indexCache = idx;
+  } catch(e){ /* non-fatal */ }
+}
+
 /* ---------------- storage ---------------- */
 async function persistLastCode(){
   try { await storage.set(LAST_CODE_KEY, JSON.stringify({code: currentCode}), false); }
@@ -419,13 +477,18 @@ async function saveState(){
   try {
     await storage.set(STORAGE_PREFIX+currentCode, JSON.stringify(state), true);
     setSync('ok');
+    await upsertIndexEntry('events', { code: currentCode, teamA: state.teamA.name, teamB: state.teamB.name });
   } catch(e){ setSync('err'); }
 }
 async function tryLoad(code){
   currentCode = code.trim().toUpperCase();
   try {
     const res = await storage.get(STORAGE_PREFIX+currentCode, true);
-    if (res && res.value){ state = JSON.parse(res.value); migrateState(); return true; }
+    if (res && res.value){
+      state = JSON.parse(res.value); migrateState();
+      await upsertIndexEntry('events', { code: currentCode, teamA: state.teamA.name, teamB: state.teamB.name });
+      return true;
+    }
   } catch(e){ /* not found yet */ }
   return false;
 }
@@ -445,13 +508,18 @@ async function saveTeamProfile(){
   try {
     await storage.set(TEAM_PREFIX+teamProfileCode, JSON.stringify(teamProfile), true);
     setSync('ok');
+    await upsertIndexEntry('teams', { code: teamProfileCode, name: teamProfile.name });
   } catch(e){ setSync('err'); }
 }
 async function tryLoadTeamProfile(code){
   teamProfileCode = code.trim().toUpperCase();
   try {
     const res = await storage.get(TEAM_PREFIX+teamProfileCode, true);
-    if (res && res.value){ teamProfile = JSON.parse(res.value); migrateTeamProfile(); return true; }
+    if (res && res.value){
+      teamProfile = JSON.parse(res.value); migrateTeamProfile();
+      await upsertIndexEntry('teams', { code: teamProfileCode, name: teamProfile.name });
+      return true;
+    }
   } catch(e){ /* not found yet */ }
   return false;
 }
@@ -460,6 +528,7 @@ function migrateTeamProfile(){
   if (!teamProfile.factions) teamProfile.factions = Array(8).fill('');
   if (!teamProfile.dispositions) teamProfile.dispositions = defaultDispositions();
   if (!teamProfile.matchupRatings) teamProfile.matchupRatings = blankMatchupRatings();
+  if (!teamProfile.bcpLinks) teamProfile.bcpLinks = Array(8).fill('');
 }
 function newTeamProfile(code){
   return {
@@ -468,7 +537,8 @@ function newTeamProfile(code){
     players: blankPlayers('Player'),
     dispositions: defaultDispositions(),
     factions: Array(8).fill(''),
-    matchupRatings: blankMatchupRatings()
+    matchupRatings: blankMatchupRatings(),
+    bcpLinks: Array(8).fill('')
   };
 }
 function migrateState(){
@@ -478,6 +548,7 @@ function migrateState(){
     if (team && !team.factions) team.factions = Array(8).fill('');
     if (team && !team.dispositions) team.dispositions = defaultDispositions();
     if (team && !team.matchupRatings) team.matchupRatings = blankMatchupRatings();
+    if (team && !team.bcpLinks) team.bcpLinks = Array(8).fill('');
   });
 }
 
@@ -503,6 +574,11 @@ function getFaction(side, playerName){
   const idx = team.players.indexOf(playerName);
   return (idx>=0 && team.factions) ? (team.factions[idx] || '') : '';
 }
+function getBcpLink(side, playerName){
+  const team = (side==='a' || side==='A') ? state.teamA : state.teamB;
+  const idx = team.players.indexOf(playerName);
+  return (idx>=0 && team.bcpLinks) ? (team.bcpLinks[idx] || '') : '';
+}
 function getMatchupRating(side, playerName, opponentDisposition){
   if (!opponentDisposition) return null;
   const team = (side==='a' || side==='A') ? state.teamA : state.teamB;
@@ -516,6 +592,11 @@ function dispTag(side, name){
   const f = getFaction(side, name);
   const parts = [d, f].filter(Boolean);
   return parts.length ? ` <span class="mono dim" style="font-size:10px;">(${esc(parts.join(' · '))})</span>` : '';
+}
+function listLinkHTML(side, name){
+  const url = getBcpLink(side, name);
+  if (!url) return '';
+  return ` <a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="list-link">📋 list</a>`;
 }
 function ratingBadgeHTML(rating){
   if (rating == null) return '';
@@ -538,8 +619,8 @@ function dispositionSpread(team){
 function newEvent(code){
   return {
     code,
-    teamA:{ name:'Team Alpha', players: blankPlayers('Player'), dispositions: defaultDispositions(), factions: Array(8).fill(''), matchupRatings: blankMatchupRatings() },
-    teamB:{ name:'Team Beta', players: blankPlayers('Player'), dispositions: defaultDispositions(), factions: Array(8).fill(''), matchupRatings: blankMatchupRatings() },
+    teamA:{ name:'Team Alpha', players: blankPlayers('Player'), dispositions: defaultDispositions(), factions: Array(8).fill(''), matchupRatings: blankMatchupRatings(), bcpLinks: Array(8).fill('') },
+    teamB:{ name:'Team Beta', players: blankPlayers('Player'), dispositions: defaultDispositions(), factions: Array(8).fill(''), matchupRatings: blankMatchupRatings(), bcpLinks: Array(8).fill('') },
     tables: Array.from({length:8}, (_,i)=>({ id:i+1, label:`Table ${i+1}` })),
     scoringMode: 'wtc',
     setupComplete: false,
@@ -611,6 +692,7 @@ function eventStandings(){
 
 /* ---------------- routing / render ---------------- */
 function route(){
+  if (!authenticated){ app.innerHTML = passwordGateHTML(); return; }
   if (mode === 'team'){
     app.innerHTML = teamProfile ? (teamProfileHeaderHTML() + teamProfileBodyHTML()) : landingHTML();
     return;
@@ -623,6 +705,22 @@ function route(){
   else app.innerHTML = header() + completeHTML(round);
 }
 
+function passwordGateHTML(){
+  return `
+  <div class="hud-header"><div class="hud-brand"><span class="bracket">[</span> 8-MAN MATCHUP CONSOLE <span class="bracket">]</span></div></div>
+  <div class="panel landing-card">
+    <div class="eyebrow">ACCESS</div>
+    <h2>Enter password</h2>
+    <div class="field">
+      <input type="password" id="app-password" placeholder="Password">
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" data-action="submit-password">Enter</button>
+    </div>
+    <div id="password-error" class="error-text"></div>
+  </div>`;
+}
+
 function header(){
   const round = state.rounds && state.currentRound!=null ? curRound() : null;
   return `
@@ -633,8 +731,8 @@ function header(){
       ${round ? `<span class="hud-badge mono">ROUND ${round.number}</span>` : ''}
       <span class="hud-badge"><span class="sync-dot" id="sync-dot"></span><span id="sync-label">synced</span></span>
       <button class="btn-ghost" data-action="refresh">⟳ refresh</button>
+      <button class="btn-ghost" data-action="go-home">🏠 all teams &amp; events</button>
       <button class="btn-ghost" data-action="goto-team-profile">team profile</button>
-      ${state.setupComplete ? `<button class="btn-ghost" data-action="new-event">+ new event</button>` : ''}
     </div>
   </div>`;
 }
@@ -647,42 +745,70 @@ function teamProfileHeaderHTML(){
       <span class="hud-badge mono">CODE ${esc(teamProfile.code)}</span>
       <span class="hud-badge"><span class="sync-dot" id="sync-dot"></span><span id="sync-label">synced</span></span>
       <button class="btn-ghost" data-action="refresh-profile">⟳ refresh</button>
-      <button class="btn-ghost" data-action="exit-team-profile">← back to start</button>
+      <button class="btn-ghost" data-action="go-home">🏠 all teams &amp; events</button>
     </div>
   </div>`;
 }
 
-/* ---------------- landing ---------------- */
+/* ---------------- landing / hub ---------------- */
+function teamListHTML(){
+  if (!indexCache.teams.length) return `<p class="note" style="margin-top:0;">No team profiles yet — create one below.</p>`;
+  return `<div class="pick-list">${indexCache.teams.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(t=>`
+    <div class="pick-row">
+      <button class="pick-btn" data-action="pick-team" data-code="${esc(t.code)}">
+        <span class="pick-name">${esc(t.name)}</span><span class="pick-code mono">${esc(t.code)}</span>
+      </button>
+      <button class="btn-ghost pick-del" data-action="delete-team" data-code="${esc(t.code)}" data-name="${esc(t.name)}" title="Delete this team profile">🗑</button>
+    </div>`).join('')}</div>`;
+}
+function eventListHTML(){
+  if (!indexCache.events.length) return `<p class="note" style="margin-top:0;">No events yet — create one below.</p>`;
+  return `<div class="pick-list">${indexCache.events.slice().sort((a,b)=>((a.teamA||'')+(a.teamB||'')).localeCompare((b.teamA||'')+(b.teamB||''))).map(e=>`
+    <div class="pick-row">
+      <button class="pick-btn" data-action="pick-event" data-code="${esc(e.code)}">
+        <span class="pick-name">${esc(e.teamA)} vs ${esc(e.teamB)}</span><span class="pick-code mono">${esc(e.code)}</span>
+      </button>
+      <button class="btn-ghost pick-del" data-action="delete-event" data-code="${esc(e.code)}" data-name="${esc(e.teamA)} vs ${esc(e.teamB)}" title="Delete this event">🗑</button>
+    </div>`).join('')}</div>`;
+}
 function landingHTML(){
   return `
-  <div class="hud-header"><div class="hud-brand"><span class="bracket">[</span> 8-MAN MATCHUP CONSOLE <span class="bracket">]</span></div></div>
-  <div class="panel landing-card">
-    <div class="eyebrow">TEAM PROFILE</div>
-    <h2>Set up your own team</h2>
-    <p class="dim" style="font-size:13px;">Build your roster, dispositions, factions, and matchup ratings before any event exists. Give this code to your own players only — it's separate from any event code, so opponents never see it.</p>
-    <div class="field">
-      <label class="field-label">Team profile code</label>
-      <input type="text" id="team-profile-code" maxlength="8" style="text-transform:uppercase;font-family:var(--font-mono);letter-spacing:.1em;" placeholder="${randomCode()}">
-    </div>
-    <div class="btn-row">
-      <button class="btn btn-primary" data-action="open-team-profile">Create / Open team profile</button>
-      <button class="btn" data-action="random-team-code">Generate new code</button>
-    </div>
-    <div id="team-profile-error" class="error-text"></div>
+  <div class="hud-header">
+    <div class="hud-brand"><span class="bracket">[</span> 8-MAN MATCHUP CONSOLE <span class="bracket">]</span></div>
+    <div class="hud-meta"><button class="btn-ghost" data-action="refresh-index">⟳ refresh list</button></div>
   </div>
-  <div class="panel landing-card">
-    <div class="eyebrow">EVENT ACCESS</div>
-    <h2>Enter an event code</h2>
-    <p class="dim" style="font-size:13px;">Create a new event, or enter a code someone already shared with you to jump into the same live pairing session. Anyone with the code can view and edit it.</p>
-    <div class="field">
-      <label class="field-label">Event code</label>
-      <input type="text" id="landing-code" maxlength="8" style="text-transform:uppercase;font-family:var(--font-mono);letter-spacing:.1em;" placeholder="${randomCode()}">
+  <div class="panel">
+    <div class="panel-title"><h2>Team Profiles</h2><span class="eyebrow">YOUR TEAMS</span></div>
+    <p class="dim" style="font-size:13px;margin-top:0;">Roster, dispositions, factions, and matchup ratings — built once, reused across events.</p>
+    ${teamListHTML()}
+    <div class="btn-row"><button class="btn btn-primary" data-action="create-team-profile">+ New team profile</button></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><h2>Events</h2><span class="eyebrow">LIVE PAIRING SESSIONS</span></div>
+    ${eventListHTML()}
+    <div class="btn-row"><button class="btn btn-primary" data-action="create-event">+ New event</button></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><h3>Have a code someone shared?</h3></div>
+    <p class="note" style="margin-top:0;">Not showing above yet? Open it directly by code — it'll join the lists above from then on.</p>
+    <div class="two-col">
+      <div>
+        <div class="field-label">Team profile code</div>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="team-profile-code" maxlength="8" style="text-transform:uppercase;font-family:var(--font-mono);letter-spacing:.1em;">
+          <button class="btn" data-action="open-team-profile">Open</button>
+        </div>
+        <div id="team-profile-error" class="error-text"></div>
+      </div>
+      <div>
+        <div class="field-label">Event code</div>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="landing-code" maxlength="8" style="text-transform:uppercase;font-family:var(--font-mono);letter-spacing:.1em;">
+          <button class="btn" data-action="join-event">Open</button>
+        </div>
+        <div id="landing-error" class="error-text"></div>
+      </div>
     </div>
-    <div class="btn-row">
-      <button class="btn btn-primary" data-action="join-event">Create / Join</button>
-      <button class="btn" data-action="random-code">Generate new code</button>
-    </div>
-    <div id="landing-error" class="error-text"></div>
   </div>`;
 }
 
@@ -692,7 +818,7 @@ function teamProfileBodyHTML(){
     <div class="panel-title"><h2>${esc(teamProfile.name)}</h2><span class="eyebrow">YOUR TEAM ONLY</span></div>
     <input class="team-name-input" type="text" data-bind="profile.name" value="${esc(teamProfile.name)}" style="margin-bottom:14px;">
     <div class="roster-grid">
-      ${teamProfile.players.map((p,i)=>rosterRowHTML('p', p, i, teamProfile.dispositions[i], teamProfile.factions[i])).join('')}
+      ${teamProfile.players.map((p,i)=>rosterRowHTML('p', p, i, teamProfile.dispositions[i], teamProfile.factions[i], teamProfile.bcpLinks[i])).join('')}
     </div>
     ${dispositionSpreadHTML(teamProfile)}
   </div>
@@ -711,12 +837,13 @@ function teamProfileBodyHTML(){
 }
 
 /* ---------------- setup ---------------- */
-function rosterRowHTML(side, name, idx, disposition, faction){
+function rosterRowHTML(side, name, idx, disposition, faction, bcpLink){
   const prefix = side==='p' ? 'profile' : `team${side.toUpperCase()}`;
   return `
   <div class="roster-row">
     <input class="player-name" type="text" data-bind="${prefix}.players.${idx}" value="${esc(name)}" placeholder="Player name">
     <input class="player-faction" type="text" data-bind="${prefix}.factions.${idx}" value="${esc(faction||'')}" placeholder="Faction">
+    <input class="player-bcplink" type="text" data-bind="${prefix}.bcpLinks.${idx}" value="${esc(bcpLink||'')}" placeholder="BCP list link">
     <select data-action="set-disposition" data-side="${side}" data-idx="${idx}">
       ${DISPOSITIONS.map(d=>`<option value="${d}" ${disposition===d?'selected':''}>${esc(d)}</option>`).join('')}
     </select>
@@ -747,14 +874,17 @@ function matchupMatrixHTML(side, team){
   </table></div>`;
 }
 function importProfileHTML(){
+  const hasTeams = indexCache.teams.length > 0;
   return `
   <div class="panel">
     <div class="panel-title"><h3>Import a team profile</h3></div>
-    <p class="note" style="margin-top:0;">Already built a team profile (roster, dispositions, factions, matchup ratings) from the start screen? Pull it in here instead of retyping everything.</p>
+    <p class="note" style="margin-top:0;">Already built a team profile (roster, dispositions, factions, matchup ratings)? Pull it in here instead of retyping everything.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
-      <div style="flex:1;min-width:140px;">
-        <div class="field-label">Team profile code</div>
-        <input type="text" id="import-profile-code" style="text-transform:uppercase;font-family:var(--font-mono);letter-spacing:.1em;">
+      <div style="flex:1;min-width:160px;">
+        <div class="field-label">Team profile</div>
+        ${hasTeams
+          ? `<select id="import-profile-code">${indexCache.teams.map(t=>`<option value="${esc(t.code)}">${esc(t.name)} (${esc(t.code)})</option>`).join('')}</select>`
+          : `<input type="text" id="import-profile-code" placeholder="Team profile code" style="text-transform:uppercase;font-family:var(--font-mono);letter-spacing:.1em;">`}
       </div>
       <button class="btn" data-action="import-profile" data-target="A">Import into ${esc(state.teamA.name)}</button>
       <button class="btn" data-action="import-profile" data-target="B">Import into ${esc(state.teamB.name)}</button>
@@ -772,14 +902,14 @@ function setupHTML(){
       <div class="team-block a">
         <input class="team-name-input" type="text" data-bind="teamA.name" value="${esc(state.teamA.name)}">
         <div class="roster-grid">
-          ${state.teamA.players.map((p,i)=>rosterRowHTML('a', p, i, state.teamA.dispositions[i], state.teamA.factions[i])).join('')}
+          ${state.teamA.players.map((p,i)=>rosterRowHTML('a', p, i, state.teamA.dispositions[i], state.teamA.factions[i], state.teamA.bcpLinks[i])).join('')}
         </div>
         ${dispositionSpreadHTML(state.teamA)}
       </div>
       <div class="team-block b">
         <input class="team-name-input" type="text" data-bind="teamB.name" value="${esc(state.teamB.name)}">
         <div class="roster-grid">
-          ${state.teamB.players.map((p,i)=>rosterRowHTML('b', p, i, state.teamB.dispositions[i], state.teamB.factions[i])).join('')}
+          ${state.teamB.players.map((p,i)=>rosterRowHTML('b', p, i, state.teamB.dispositions[i], state.teamB.factions[i], state.teamB.bcpLinks[i])).join('')}
         </div>
         ${dispositionSpreadHTML(state.teamB)}
       </div>
@@ -890,6 +1020,7 @@ function sidePoolHTML(side, name, pool, nom){
             <input type="radio" name="def-${side}" data-action="pick-defender" data-side="${side}" data-player="${esc(p)}" ${isDef?'checked':''}>
             <span>${esc(p)}${dispTag(side,p)}</span>
           </label>
+          ${listLinkHTML(side,p)}
           <label style="margin-left:auto;display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-dim);flex-shrink:0;">
             <input type="checkbox" data-action="pick-attacker" data-side="${side}" data-player="${esc(p)}" ${isAtk?'checked':''} ${isDef?'disabled':''}> atk
           </label>
@@ -919,7 +1050,7 @@ function acceptRefuseHTML(round){
   <div class="vs-wrap">
     <div class="vs-label">${esc(state.teamA.name).toUpperCase()}'S DEFENDER</div>
     <div class="vs-grid">
-      <div class="vs-def">${esc(c.nomA.defender)}${dispTag('a', c.nomA.defender)}</div>
+      <div class="vs-def">${esc(c.nomA.defender)}${dispTag('a', c.nomA.defender)}${listLinkHTML('a', c.nomA.defender)}</div>
       <div class="vs-divider">vs</div>
       <div class="atk-options">
         ${c.nomB.attackers.map(p=>atkCardHTML(p, c.acceptForA, 'acceptForA', 'b', 'a', c.nomA.defender)).join('')}
@@ -929,7 +1060,7 @@ function acceptRefuseHTML(round){
   <div class="vs-wrap">
     <div class="vs-label">${esc(state.teamB.name).toUpperCase()}'S DEFENDER</div>
     <div class="vs-grid">
-      <div class="vs-def">${esc(c.nomB.defender)}${dispTag('b', c.nomB.defender)}</div>
+      <div class="vs-def">${esc(c.nomB.defender)}${dispTag('b', c.nomB.defender)}${listLinkHTML('b', c.nomB.defender)}</div>
       <div class="vs-divider">vs</div>
       <div class="atk-options">
         ${c.nomA.attackers.map(p=>atkCardHTML(p, c.acceptForB, 'acceptForB', 'a', 'b', c.nomB.defender)).join('')}
@@ -946,7 +1077,7 @@ function atkCardHTML(player, chosen, field, side, defSide, defName){
   const otherChosen = chosen && !isChosen;
   const rating = getMatchupRating(defSide, defName, getDisposition(side, player));
   return `<div class="atk-card ${isChosen?'chosen':''} ${otherChosen?'faded':''}">
-    <span>${esc(player)}${dispTag(side, player)}${rating!=null?`<br>${ratingBadgeHTML(rating)}`:''}</span>
+    <span>${esc(player)}${dispTag(side, player)}${listLinkHTML(side, player)}${rating!=null?`<br>${ratingBadgeHTML(rating)}`:''}</span>
     ${isChosen ? `<span class="stamp">ACCEPTED</span>` : `<button class="btn btn-ghost" data-action="choose-attacker" data-field="${field}" data-player="${esc(player)}">Accept</button>`}
   </div>`;
 }
@@ -959,7 +1090,7 @@ function assignTablesHTML(round){
   ${c.confirmed.map((p,idx)=>{
     const teamLabel = p.defenderSide==='A' ? state.teamA.name : state.teamB.name;
     return `<div class="panel" style="background:var(--panel-alt);margin-bottom:10px;">
-      <div style="margin-bottom:10px;font-size:13px;"><span class="dim">${esc(teamLabel)} defends:</span> <span style="color:var(--teamA)">${esc(p.playerA)}${dispTag('a',p.playerA)}</span> vs <span style="color:var(--teamB)">${esc(p.playerB)}${dispTag('b',p.playerB)}</span></div>
+      <div style="margin-bottom:10px;font-size:13px;"><span class="dim">${esc(teamLabel)} defends:</span> <span style="color:var(--teamA)">${esc(p.playerA)}${dispTag('a',p.playerA)}${listLinkHTML('a',p.playerA)}</span> vs <span style="color:var(--teamB)">${esc(p.playerB)}${dispTag('b',p.playerB)}${listLinkHTML('b',p.playerB)}</span></div>
       <div style="display:flex;flex-wrap:wrap;gap:18px;">
         <div>
           <div class="field-label">Table</div>
@@ -990,7 +1121,7 @@ function finalTablesHTML(round){
   ${c.confirmed.map((p,idx)=>`
     <div class="panel" style="background:var(--panel-alt);margin-bottom:10px;">
       <div class="eyebrow" style="margin-bottom:8px;">${labels[idx]||''}</div>
-      <div style="margin-bottom:10px;font-size:13px;"><span style="color:var(--teamA)">${esc(p.playerA)}${dispTag('a',p.playerA)}</span> vs <span style="color:var(--teamB)">${esc(p.playerB)}${dispTag('b',p.playerB)}</span></div>
+      <div style="margin-bottom:10px;font-size:13px;"><span style="color:var(--teamA)">${esc(p.playerA)}${dispTag('a',p.playerA)}${listLinkHTML('a',p.playerA)}</span> vs <span style="color:var(--teamB)">${esc(p.playerB)}${dispTag('b',p.playerB)}${listLinkHTML('b',p.playerB)}</span></div>
       <div style="display:flex;flex-wrap:wrap;gap:18px;">
         <div>
           <div class="field-label">Table</div>
@@ -1016,7 +1147,7 @@ function tableGridHTML(round){
       return `<div class="table-card"><div class="tid">T${t.id}</div><div class="mission">${esc(t.label)}</div><div class="empty-tag">unassigned</div></div>`;
     }
     return `<div class="table-card filled"><div class="tid">T${t.id}${p.layout?` · L-${esc(p.layout)}`:''}</div><div class="mission">${esc(t.label)}</div>
-      <div class="matchup"><span class="p a">${esc(p.playerA)}${dispTag('a',p.playerA)}${compactRatingTag('a',p.playerA,'b',p.playerB)}</span><span class="p b">${esc(p.playerB)}${dispTag('b',p.playerB)}${compactRatingTag('b',p.playerB,'a',p.playerA)}</span></div></div>`;
+      <div class="matchup"><span class="p a">${esc(p.playerA)}${dispTag('a',p.playerA)}${compactRatingTag('a',p.playerA,'b',p.playerB)}${listLinkHTML('a',p.playerA)}</span><span class="p b">${esc(p.playerB)}${dispTag('b',p.playerB)}${compactRatingTag('b',p.playerB,'a',p.playerA)}${listLinkHTML('b',p.playerB)}</span></div></div>`;
   }).join('');
   return `<div class="panel"><div class="panel-title"><h3>Battle grid</h3><span class="dim mono" style="font-size:11px;">${round.pairings.length}/8 SET</span></div><div class="table-grid">${cards}</div></div>`;
 }
@@ -1053,10 +1184,10 @@ function scoringHTML(round){
     return `
     <div class="score-row">
       <div class="tlabel">T${p.tableId}${p.layout?`<br>L-${esc(p.layout)}`:''}</div>
-      <div class="pname a">${esc(p.playerA)}${dispTag('a',p.playerA)}</div>
+      <div class="pname a">${esc(p.playerA)}${dispTag('a',p.playerA)}${listLinkHTML('a',p.playerA)}</div>
       <input type="number" min="0" max="100" data-bind-score="A" data-table="${p.tableId}" value="${p.scoreA==null?'':p.scoreA}" placeholder="VP">
       <input type="number" min="0" max="100" data-bind-score="B" data-table="${p.tableId}" value="${p.scoreB==null?'':p.scoreB}" placeholder="VP">
-      <div class="pname b">${esc(p.playerB)}${dispTag('b',p.playerB)}</div>
+      <div class="pname b">${esc(p.playerB)}${dispTag('b',p.playerB)}${listLinkHTML('b',p.playerB)}</div>
       <div class="pts-preview" id="pts-${p.tableId}">${ptsPreviewHTML(p)}</div>
     </div>`;
   }).join('');
@@ -1089,7 +1220,7 @@ function completeHTML(round){
     const pts = computePoints(p.scoreA,p.scoreB,state.scoringMode);
     return `<div class="standings-row">
       <span class="mono" style="color:var(--gold);width:48px;">T${p.tableId}${p.layout?`/${esc(p.layout)}`:''}</span>
-      <span style="flex:1;"><span style="color:var(--teamA)">${esc(p.playerA)}${dispTag('a',p.playerA)}${compactRatingTag('a',p.playerA,'b',p.playerB)}</span> ${p.scoreA} — ${p.scoreB} <span style="color:var(--teamB)">${esc(p.playerB)}${dispTag('b',p.playerB)}${compactRatingTag('b',p.playerB,'a',p.playerA)}</span></span>
+      <span style="flex:1;"><span style="color:var(--teamA)">${esc(p.playerA)}${dispTag('a',p.playerA)}${compactRatingTag('a',p.playerA,'b',p.playerB)}${listLinkHTML('a',p.playerA)}</span> ${p.scoreA} — ${p.scoreB} <span style="color:var(--teamB)">${esc(p.playerB)}${dispTag('b',p.playerB)}${compactRatingTag('b',p.playerB,'a',p.playerA)}${listLinkHTML('b',p.playerB)}</span></span>
       <span class="mono dim">${pts[0]}–${pts[1]}</span>
     </div>`;
   }).join('');
@@ -1162,19 +1293,95 @@ app.addEventListener('click', async (e)=>{
   if (!el) return;
   const action = el.dataset.action;
 
-  if (action === 'join-event'){
-    const input = document.getElementById('landing-code');
-    let code = (input.value || '').trim();
-    if (!code) code = randomCode();
-    const found = await tryLoad(code);
-    if (!found){ state = newEvent(code.toUpperCase()); await saveState(); }
+  if (action === 'submit-password'){
+    const input = document.getElementById('app-password');
+    const val = input ? input.value : '';
+    if (val === APP_PASSWORD){
+      setAuthed();
+      await attemptAutoLoad();
+      route();
+    } else {
+      const err = document.getElementById('password-error');
+      if (err) err.textContent = 'Incorrect password.';
+    }
+    return;
+  }
+  if (action === 'go-home'){
+    try { await storage.delete(LAST_CODE_KEY, false); } catch(err){ /* non-fatal */ }
+    try { await storage.delete(LAST_TEAM_CODE_KEY, false); } catch(err){ /* non-fatal */ }
+    state = null; currentCode = null;
+    teamProfile = null; teamProfileCode = null;
     mode = 'event';
-    await persistLastCode();
+    await refreshIndex();
     route();
     return;
   }
-  if (action === 'random-code'){
-    document.getElementById('landing-code').value = randomCode();
+  if (action === 'refresh-index'){
+    await refreshIndex();
+    route();
+    return;
+  }
+  if (action === 'create-team-profile'){
+    const code = randomCode();
+    teamProfile = newTeamProfile(code);
+    teamProfileCode = code;
+    mode = 'team';
+    await saveTeamProfile();
+    await persistLastTeamCode();
+    route();
+    return;
+  }
+  if (action === 'create-event'){
+    const code = randomCode();
+    state = newEvent(code);
+    currentCode = code;
+    mode = 'event';
+    await saveState();
+    await persistLastCode();
+    await refreshIndex();
+    route();
+    return;
+  }
+  if (action === 'pick-team'){
+    const found = await tryLoadTeamProfile(el.dataset.code);
+    if (found){ mode = 'team'; await persistLastTeamCode(); }
+    route();
+    return;
+  }
+  if (action === 'pick-event'){
+    const found = await tryLoad(el.dataset.code);
+    if (found){ mode = 'event'; await persistLastCode(); await refreshIndex(); }
+    route();
+    return;
+  }
+  if (action === 'delete-team'){
+    const code = el.dataset.code, name = el.dataset.name;
+    if (!window.confirm(`Delete team profile "${name}" (${code})? This can't be undone.`)) return;
+    try { await storage.delete(TEAM_PREFIX+code, true); } catch(err){ /* non-fatal */ }
+    await removeIndexEntry('teams', code);
+    if (teamProfileCode === code){ teamProfile = null; teamProfileCode = null; }
+    route();
+    return;
+  }
+  if (action === 'delete-event'){
+    const code = el.dataset.code, name = el.dataset.name;
+    if (!window.confirm(`Delete event "${name}" (${code})? This can't be undone.`)) return;
+    try { await storage.delete(STORAGE_PREFIX+code, true); } catch(err){ /* non-fatal */ }
+    await removeIndexEntry('events', code);
+    if (currentCode === code){ state = null; currentCode = null; }
+    route();
+    return;
+  }
+  if (action === 'join-event'){
+    const input = document.getElementById('landing-code');
+    const errEl = document.getElementById('landing-error');
+    const code = (input ? input.value : '').trim();
+    if (!code){ if (errEl) errEl.textContent = 'Enter a code first.'; return; }
+    const found = await tryLoad(code);
+    if (!found){ if (errEl) errEl.textContent = `No event found for code ${code.toUpperCase()}.`; return; }
+    mode = 'event';
+    await persistLastCode();
+    route();
     return;
   }
   if (action === 'refresh'){
@@ -1187,26 +1394,16 @@ app.addEventListener('click', async (e)=>{
     route();
     return;
   }
-  if (action === 'new-event'){
-    try { await storage.delete(LAST_CODE_KEY, false); } catch(err){ /* non-fatal */ }
-    state = null; currentCode = null;
-    mode = 'event';
-    route();
-    return;
-  }
   if (action === 'open-team-profile'){
     const input = document.getElementById('team-profile-code');
-    let code = (input.value || '').trim();
-    if (!code) code = randomCode();
+    const errEl = document.getElementById('team-profile-error');
+    const code = (input ? input.value : '').trim();
+    if (!code){ if (errEl) errEl.textContent = 'Enter a code first.'; return; }
     const found = await tryLoadTeamProfile(code);
-    if (!found){ teamProfile = newTeamProfile(code.toUpperCase()); await saveTeamProfile(); }
+    if (!found){ if (errEl) errEl.textContent = `No team profile found for code ${code.toUpperCase()}.`; return; }
     mode = 'team';
     await persistLastTeamCode();
     route();
-    return;
-  }
-  if (action === 'random-team-code'){
-    document.getElementById('team-profile-code').value = randomCode();
     return;
   }
   if (action === 'refresh-profile'){
@@ -1216,12 +1413,6 @@ app.addEventListener('click', async (e)=>{
         if (res && res.value){ teamProfile = JSON.parse(res.value); migrateTeamProfile(); }
       }catch(err){ /* ignore */ }
     }
-    route();
-    return;
-  }
-  if (action === 'exit-team-profile'){
-    teamProfile = null; teamProfileCode = null;
-    mode = 'event';
     route();
     return;
   }
@@ -1236,6 +1427,7 @@ app.addEventListener('click', async (e)=>{
         }
       } catch(err){ /* fall through to landing */ }
     }
+    await refreshIndex();
     route();
     return;
   }
@@ -1246,6 +1438,7 @@ app.addEventListener('click', async (e)=>{
     state.teamA.players = [...teamProfile.players];
     state.teamA.dispositions = [...teamProfile.dispositions];
     state.teamA.factions = [...teamProfile.factions];
+    state.teamA.bcpLinks = [...(teamProfile.bcpLinks || Array(8).fill(''))];
     state.teamA.matchupRatings = teamProfile.matchupRatings.map(r=>({...r}));
     currentCode = code;
     mode = 'event';
@@ -1258,7 +1451,7 @@ app.addEventListener('click', async (e)=>{
     const codeInput = document.getElementById('import-profile-code');
     const errEl = document.getElementById('import-error');
     const code = (codeInput ? codeInput.value : '').trim().toUpperCase();
-    if (!code){ if (errEl) errEl.textContent = 'Enter a team profile code first.'; return; }
+    if (!code){ if (errEl) errEl.textContent = 'Choose or enter a team profile first.'; return; }
     try {
       const res = await storage.get(TEAM_PREFIX+code, true);
       if (res && res.value){
@@ -1268,6 +1461,7 @@ app.addEventListener('click', async (e)=>{
         target.players = [...(profile.players || target.players)];
         target.dispositions = [...(profile.dispositions || defaultDispositions())];
         target.factions = [...(profile.factions || Array(8).fill(''))];
+        target.bcpLinks = [...(profile.bcpLinks || Array(8).fill(''))];
         target.matchupRatings = (profile.matchupRatings || blankMatchupRatings()).map(r=>({...r}));
         scheduleSave(); route();
       } else if (errEl){
@@ -1455,8 +1649,11 @@ app.addEventListener('input', (e)=>{
 });
 
 app.addEventListener('keydown', (e)=>{
-  if (e.key === 'Enter' && e.target && e.target.id === 'landing-code'){
-    const btn = document.querySelector('[data-action="join-event"]');
+  if (e.key !== 'Enter' || !e.target) return;
+  const map = { 'landing-code':'join-event', 'team-profile-code':'open-team-profile', 'app-password':'submit-password' };
+  const action = map[e.target.id];
+  if (action){
+    const btn = document.querySelector(`[data-action="${action}"]`);
     if (btn) btn.click();
   }
 });
@@ -1472,16 +1669,22 @@ function notConfiguredHTML(){
     <p class="note">Once that's filled in, reload this page.</p>
   </div>`;
 }
-(async function init(){
-  if (!firebaseReady){ app.innerHTML = notConfiguredHTML(); return; }
+async function attemptAutoLoad(){
+  await refreshIndex();
   try {
     const last = await storage.get(LAST_CODE_KEY, false);
     if (last && last.value){
       const code = JSON.parse(last.value).code;
       const found = await tryLoad(code);
-      if (found){ route(); return; }
+      if (found){ mode = 'event'; }
     }
-  } catch(e){ /* fall through to landing */ }
+  } catch(e){ /* fall through to hub */ }
+}
+(async function init(){
+  if (!firebaseReady){ app.innerHTML = notConfiguredHTML(); return; }
+  authenticated = checkAuth();
+  if (!authenticated){ route(); return; }
+  await attemptAutoLoad();
   route();
 })();
 </script>
