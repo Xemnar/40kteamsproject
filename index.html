@@ -289,7 +289,15 @@ label{display:block;}
 }
 @media(max-width:640px){.score-row{grid-template-columns:1fr;gap:6px;}}
 .score-row input[type=number]{font-size:17px;font-weight:600;padding:10px 6px;text-align:center;}
-.score-row .pname{font-size:13px;}
+.score-row .pname{font-size:13px;display:flex;align-items:center;gap:6px;}
+.turn-toggle{
+  background:var(--panel-alt);border:1px solid var(--line);border-radius:50%;
+  width:20px;height:20px;font-size:11px;line-height:1;padding:0;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;color:var(--text-dim);
+  flex-shrink:0;
+}
+.turn-toggle:hover{border-color:var(--gold);color:var(--text);}
+.turn-toggle.active{background:var(--gold);border-color:var(--gold);color:#181307;}
 .score-row .pname.a{color:var(--teamA);}
 .score-row .pname.b{color:var(--teamB);}
 .score-row .tlabel{font-family:var(--font-mono);font-size:11px;color:var(--gold);}
@@ -604,7 +612,10 @@ function migrateState(){
     if (team && !team.bcpLinks) team.bcpLinks = Array(8).fill('');
   });
   (state.rounds||[]).forEach(round=>{
-    (round.pairings||[]).forEach(p=>{ if (!p.battleRound) p.battleRound = 'D'; });
+    (round.pairings||[]).forEach(p=>{
+      if (!p.battleRound) p.battleRound = 'D';
+      if (p.activeTurn === undefined) p.activeTurn = null;
+    });
   });
   // Repair a bug where a round's starting pool could get seeded with placeholder
   // names before the real roster was entered. Only touches it when nothing has
@@ -1427,8 +1438,8 @@ function spectatorTableCardHTML(t, round){
     <div class="tid">T${t.id}${p.layout?` · L-${esc(p.layout)}`:''}</div>
     <div class="mission">${esc(t.label)}</div>
     <div class="matchup">
-      <span class="p a">${esc(p.playerA)}${dispTag('a',p.playerA)}${listLinkHTML('a',p.playerA)}</span>
-      <span class="p b">${esc(p.playerB)}${dispTag('b',p.playerB)}${listLinkHTML('b',p.playerB)}</span>
+      <span class="p a">${p.activeTurn==='A'?'⚔ ':''}${esc(p.playerA)}${dispTag('a',p.playerA)}${listLinkHTML('a',p.playerA)}</span>
+      <span class="p b">${p.activeTurn==='B'?'⚔ ':''}${esc(p.playerB)}${dispTag('b',p.playerB)}${listLinkHTML('b',p.playerB)}</span>
     </div>
     ${spectatorRoundTrackerHTML(p)}
     ${scored ? `<div class="note" style="margin-top:6px;">${p.scoreA} — ${p.scoreB}</div>` : ''}
@@ -1497,10 +1508,10 @@ function scoringHTML(round){
     return `
     <div class="score-row">
       <div class="tlabel">T${p.tableId}${p.layout?`<br>L-${esc(p.layout)}`:''}</div>
-      <div class="pname a">${esc(p.playerA)}${dispTag('a',p.playerA)}${listLinkHTML('a',p.playerA)}</div>
+      <div class="pname a"><button type="button" class="turn-toggle ${p.activeTurn==='A'?'active':''}" data-action="set-active-turn" data-table="${p.tableId}" data-side="A" title="Mark ${esc(p.playerA)} as having top of turn">⚔</button>${esc(p.playerA)}${dispTag('a',p.playerA)}${listLinkHTML('a',p.playerA)}</div>
       <input type="number" min="0" max="100" data-bind-score="A" data-table="${p.tableId}" value="${p.scoreA==null?'':p.scoreA}" placeholder="VP">
       <input type="number" min="0" max="100" data-bind-score="B" data-table="${p.tableId}" value="${p.scoreB==null?'':p.scoreB}" placeholder="VP">
-      <div class="pname b">${esc(p.playerB)}${dispTag('b',p.playerB)}${listLinkHTML('b',p.playerB)}</div>
+      <div class="pname b"><button type="button" class="turn-toggle ${p.activeTurn==='B'?'active':''}" data-action="set-active-turn" data-table="${p.tableId}" data-side="B" title="Mark ${esc(p.playerB)} as having top of turn">⚔</button>${esc(p.playerB)}${dispTag('b',p.playerB)}${listLinkHTML('b',p.playerB)}</div>
       <div class="pts-preview" id="pts-${p.tableId}">${ptsPreviewHTML(p)}</div>
       ${roundTrackerHTML(p)}
     </div>`;
@@ -1594,8 +1605,8 @@ function afterChunkConfirmed(round){
     const leftoverA = round.poolA.find(p=>p!==refusedA) || round.poolA[0];
     const leftoverB = round.poolB.find(p=>p!==refusedB) || round.poolB[0];
     nextChunk.confirmed = [
-      { playerA: refusedA, playerB: refusedB, defenderSide:'final', tableId:null, layout:null, scoreA:null, scoreB:null, battleRound:'D' },
-      { playerA: leftoverA, playerB: leftoverB, defenderSide:'final', tableId:null, layout:null, scoreA:null, scoreB:null, battleRound:'D' }
+      { playerA: refusedA, playerB: refusedB, defenderSide:'final', tableId:null, layout:null, scoreA:null, scoreB:null, battleRound:'D', activeTurn:null },
+      { playerA: leftoverA, playerB: leftoverB, defenderSide:'final', tableId:null, layout:null, scoreA:null, scoreB:null, battleRound:'D', activeTurn:null }
     ];
     nextChunk.phase = 'finalTables';
     round.poolA = []; round.poolB = [];
@@ -1891,8 +1902,8 @@ app.addEventListener('click', async (e)=>{
   if (action === 'confirm-accept-refuse'){
     const round = curRound();
     const c = round.chunk;
-    const pairing1 = { playerA: c.nomA.defender, playerB: c.acceptForA, defenderSide:'A', tableId:null, layout:null, scoreA:null, scoreB:null, battleRound:'D' };
-    const pairing2 = { playerA: c.acceptForB, playerB: c.nomB.defender, defenderSide:'B', tableId:null, layout:null, scoreA:null, scoreB:null, battleRound:'D' };
+    const pairing1 = { playerA: c.nomA.defender, playerB: c.acceptForA, defenderSide:'A', tableId:null, layout:null, scoreA:null, scoreB:null, battleRound:'D', activeTurn:null };
+    const pairing2 = { playerA: c.acceptForB, playerB: c.nomB.defender, defenderSide:'B', tableId:null, layout:null, scoreA:null, scoreB:null, battleRound:'D', activeTurn:null };
     // remove the defender + accepted attacker from each pool; the refused attacker was
     // never removed from the pool in the first place, so it's already back where it belongs
     round.poolA = round.poolA.filter(p=>p!==c.nomA.defender && p!==c.acceptForB);
@@ -1924,6 +1935,17 @@ app.addEventListener('click', async (e)=>{
     const p = round.pairings.find(p=>p.tableId===tableId);
     if (p){
       p.battleRound = el.dataset.round;
+      scheduleSave();
+      route();
+    }
+    return;
+  }
+  if (action === 'set-active-turn'){
+    const round = curRound();
+    const tableId = parseInt(el.dataset.table);
+    const p = round.pairings.find(p=>p.tableId===tableId);
+    if (p){
+      p.activeTurn = (p.activeTurn === el.dataset.side) ? null : el.dataset.side;
       scheduleSave();
       route();
     }
