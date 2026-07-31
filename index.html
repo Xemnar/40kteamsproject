@@ -211,6 +211,18 @@ label{display:block;}
   padding:7px 9px;font-size:13px;
 }
 .pool-item input{width:auto;}
+.atk-pick-btn{
+  flex:1;display:flex;justify-content:space-between;align-items:center;gap:10px;
+  background:var(--panel-alt);border:1px solid var(--line-soft);border-radius:var(--radius);
+  padding:13px 14px;font-size:14px;color:var(--text);text-align:left;cursor:pointer;
+  transition:background .15s,border-color .15s;width:100%;min-width:0;
+}
+.atk-pick-btn:hover{border-color:var(--gold);}
+.atk-pick-btn.selected{background:var(--gold-soft);border-color:var(--gold);color:var(--gold);}
+.atk-pick-btn .pick-check{
+  font-family:var(--font-mono);font-size:11px;letter-spacing:.04em;color:var(--good);
+  font-weight:700;flex-shrink:0;white-space:nowrap;
+}
 .role-tag{
   font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;
   padding:2px 6px;border-radius:2px;margin-left:auto;flex-shrink:0;
@@ -252,7 +264,10 @@ label{display:block;}
   background:var(--panel-alt);padding:10px 12px;font-size:13px;
   display:flex;justify-content:space-between;align-items:center;gap:8px;
 }
-.atk-card button{white-space:nowrap;}
+button.atk-card{font-family:inherit;color:inherit;text-align:left;width:100%;cursor:pointer;transition:border-color .15s;}
+button.atk-card:hover{border-color:var(--gold);}
+button.atk-card:hover .tap-hint{color:var(--gold);}
+.atk-card .tap-hint{font-family:var(--font-mono);font-size:10px;letter-spacing:.04em;color:var(--text-dim);flex-shrink:0;white-space:nowrap;}
 .atk-card.r1{border-color:var(--r1);background:linear-gradient(90deg, rgba(226,72,60,.16), transparent);}
 .atk-card.r2{border-color:var(--r2);background:linear-gradient(90deg, rgba(224,136,61,.16), transparent);}
 .atk-card.r3{border-color:var(--r3);background:linear-gradient(90deg, rgba(230,200,74,.16), transparent);}
@@ -1177,11 +1192,11 @@ function sideDefenderPoolHTML(side, name, pool, nom){
     <div class="pool-list">
       ${pool.map(p=>{
         const isDef = nom.defender === p;
-        return `<div class="pool-item">
-          <label style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;">
-            <input type="radio" name="def-${side}" data-action="pick-defender" data-side="${side}" data-player="${esc(p)}" ${isDef?'checked':''}>
+        return `<div style="display:flex;align-items:center;gap:8px;">
+          <button type="button" class="atk-pick-btn ${isDef?'selected':''}" data-action="pick-defender" data-side="${side}" data-player="${esc(p)}">
             <span>${esc(p)}${dispTag(side,p)}</span>
-          </label>
+            ${isDef ? '<span class="pick-check">✓ defender</span>' : ''}
+          </button>
           ${listLinkHTML(side,p)}
         </div>`;
       }).join('')}
@@ -1210,11 +1225,11 @@ function sideAttackerPoolHTML(side, name, pool, nom){
     <div class="pool-list">
       ${candidates.map(p=>{
         const isAtk = nom.attackers.includes(p);
-        return `<div class="pool-item">
-          <label style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;">
-            <input type="checkbox" data-action="pick-attacker" data-side="${side}" data-player="${esc(p)}" ${isAtk?'checked':''}>
+        return `<div style="display:flex;align-items:center;gap:8px;">
+          <button type="button" class="atk-pick-btn ${isAtk?'selected':''}" data-action="pick-attacker" data-side="${side}" data-player="${esc(p)}">
             <span>${esc(p)}${dispTag(side,p)}</span>
-          </label>
+            ${isAtk ? '<span class="pick-check">✓ selected</span>' : ''}
+          </button>
           ${listLinkHTML(side,p)}
         </div>`;
       }).join('')}
@@ -1277,9 +1292,20 @@ function atkCardHTML(player, chosen, field, side, defSide, defName){
   const isChosen = chosen === player;
   const otherChosen = chosen && !isChosen;
   const rating = getMatchupRating(defSide, defName, getDisposition(side, player));
-  return `<div class="atk-card ${rating!=null?'r'+rating:''} ${isChosen?'chosen':''} ${otherChosen?'faded':''}">
-    <span>${esc(player)}${dispTag(side, player)}${listLinkHTML(side, player)}${rating!=null?`<br>${ratingBadgeHTML(rating)}`:''}</span>
-    ${isChosen ? `<span class="stamp">ACCEPTED</span>` : `<button class="btn btn-ghost" data-action="choose-attacker" data-field="${field}" data-player="${esc(player)}">Accept</button>`}
+  const ratingClass = rating!=null ? 'r'+rating : '';
+  const ratingLine = rating!=null ? `<br>${ratingBadgeHTML(rating)}` : '';
+  if (isChosen){
+    return `<div class="atk-card chosen ${ratingClass}">
+      <span>${esc(player)}${dispTag(side, player)}${listLinkHTML(side, player)}${ratingLine}</span>
+      <span class="stamp">ACCEPTED</span>
+    </div>`;
+  }
+  return `<div style="display:flex;align-items:center;gap:8px;">
+    <button type="button" class="atk-card ${ratingClass} ${otherChosen?'faded':''}" data-action="choose-attacker" data-field="${field}" data-player="${esc(player)}">
+      <span>${esc(player)}${dispTag(side, player)}${ratingLine}</span>
+      <span class="tap-hint">Accept →</span>
+    </button>
+    ${listLinkHTML(side, player)}
   </div>`;
 }
 
@@ -1449,6 +1475,38 @@ function spectatorBattleGridHTML(round){
   const cards = state.tables.map(t=>spectatorTableCardHTML(t, round)).join('');
   return `<div class="panel"><div class="panel-title"><h3>Battle grid</h3><span class="dim mono" style="font-size:11px;">${round.pairings.length}/8 SET</span></div><div class="table-grid">${cards}</div></div>`;
 }
+function spectatorRosterTableHTML(side, team){
+  const rows = team.players.map(p=>{
+    const army = getFaction(side, p);
+    const disp = getDisposition(side, p);
+    const link = getBcpLink(side, p);
+    return `<tr>
+      <td class="matrix-name">${esc(p)}</td>
+      <td>${army ? esc(army) : '<span class="dim">—</span>'}</td>
+      <td>${disp ? esc(disp) : '<span class="dim">—</span>'}</td>
+      <td>${link ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer" class="list-link">📋 list</a>` : '<span class="dim">—</span>'}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="matrix-scroll"><table class="matchup-matrix">
+    <thead><tr><th style="text-align:left;">Player</th><th>Army</th><th>Disposition</th><th>List</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+function spectatorRostersHTML(){
+  return `<div class="panel">
+    <div class="panel-title"><h3>Rosters</h3></div>
+    <div class="two-col">
+      <div>
+        <div class="side-title a" style="margin-bottom:8px;"><span class="swatch"></span>${esc(state.teamA.name)}</div>
+        ${spectatorRosterTableHTML('a', state.teamA)}
+      </div>
+      <div>
+        <div class="side-title b" style="margin-bottom:8px;"><span class="swatch"></span>${esc(state.teamB.name)}</div>
+        ${spectatorRosterTableHTML('b', state.teamB)}
+      </div>
+    </div>
+  </div>`;
+}
 function spectatorHeaderHTML(){
   return `
   <div class="hud-header">
@@ -1485,6 +1543,7 @@ function spectatorBodyHTML(){
     </div>
   </div>
   ${outcomeBlock}
+  ${round.status === 'drafting' ? spectatorRostersHTML() : ''}
   ${spectatorBattleGridHTML(round)}
   <p class="note" style="text-align:center;">Updates automatically every 15 seconds.</p>`;
 }
@@ -1883,6 +1942,28 @@ app.addEventListener('click', async (e)=>{
     scheduleSave(); route();
     return;
   }
+  if (action === 'pick-defender'){
+    const round = curRound();
+    const side = el.dataset.side, player = el.dataset.player;
+    const nom = side==='a' ? round.chunk.nomA : round.chunk.nomB;
+    nom.defender = player;
+    nom.attackers = nom.attackers.filter(p=>p!==player);
+    scheduleSave(); route();
+    return;
+  }
+  if (action === 'pick-attacker'){
+    const round = curRound();
+    const side = el.dataset.side, player = el.dataset.player;
+    const nom = side==='a' ? round.chunk.nomA : round.chunk.nomB;
+    if (nom.attackers.includes(player)){
+      nom.attackers = nom.attackers.filter(p=>p!==player);
+    } else {
+      if (nom.attackers.length >= 2) return;
+      nom.attackers.push(player);
+    }
+    scheduleSave(); route();
+    return;
+  }
   if (action === 'confirm-defenders'){
     const round = curRound();
     const c = round.chunk;
@@ -1980,28 +2061,6 @@ app.addEventListener('click', async (e)=>{
 
 app.addEventListener('change', (e)=>{
   const el = e.target;
-  if (el.dataset.action === 'pick-defender'){
-    const round = curRound();
-    const side = el.dataset.side, player = el.dataset.player;
-    const nom = side==='a' ? round.chunk.nomA : round.chunk.nomB;
-    nom.defender = player;
-    nom.attackers = nom.attackers.filter(p=>p!==player);
-    scheduleSave(); route();
-    return;
-  }
-  if (el.dataset.action === 'pick-attacker'){
-    const round = curRound();
-    const side = el.dataset.side, player = el.dataset.player;
-    const nom = side==='a' ? round.chunk.nomA : round.chunk.nomB;
-    if (el.checked){
-      if (nom.attackers.length >= 2){ el.checked = false; return; }
-      nom.attackers.push(player);
-    } else {
-      nom.attackers = nom.attackers.filter(p=>p!==player);
-    }
-    scheduleSave(); route();
-    return;
-  }
   if (el.dataset.action === 'set-scoring'){
     state.scoringMode = el.value;
     scheduleSave();
