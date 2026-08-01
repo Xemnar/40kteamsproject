@@ -371,11 +371,88 @@ button.atk-card:hover .tap-hint{color:var(--gold);}
 </head>
 <body>
 <div id="app">Loading…</div>
+<!-- Firebase (Realtime Database) — used for persistence when this file runs outside Claude.ai -->
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
 <script>
 /* =========================================================
-   8-MAN MATCHUP CONSOLE
+   8-MAN MATCHUP CONSOLE — standalone / self-hosted build
    Accept/Refuse team pairing draft for 8-a-side 40k events
    ========================================================= */
+
+/* =========================================================
+   FIREBASE — already configured for the k-teams-project Firebase
+   project. If you ever need to point this at a different Firebase
+   project, replace the object below with that project's config
+   (Firebase console → Project settings → Your apps → the </> icon).
+
+   Security rules note: anyone who has your databaseURL can read/
+   write it — same trust model as the event/team codes (the code
+   is the only gate), now paired with the app's registration/login
+   screen. Your Realtime Database is currently in "test mode,"
+   which stops accepting writes after 30 days unless you update
+   the rules. When you get to it, in Realtime Database → Rules, use:
+     { "rules": { ".read": true, ".write": true } }
+   to remove that expiry — no rush, it works fine as-is until then.
+   ========================================================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyDvHxbiPr8tZEar0FJfqKt0_A41rxrguz4",
+  authDomain: "k-teams-project.firebaseapp.com",
+  databaseURL: "https://k-teams-project-default-rtdb.firebaseio.com",
+  projectId: "k-teams-project",
+  storageBucket: "k-teams-project.firebasestorage.app",
+  messagingSenderId: "1058043714195",
+  appId: "1:1058043714195:web:0bf8b9e6937fc213af4b66",
+  measurementId: "G-WX4F3JNWFT"
+};
+
+let firebaseReady = false;
+let fbDb = null;
+try {
+  if (firebaseConfig.apiKey && firebaseConfig.apiKey !== 'YOUR_API_KEY' && typeof firebase !== 'undefined'){
+    firebase.initializeApp(firebaseConfig);
+    fbDb = firebase.database();
+    firebaseReady = true;
+  }
+} catch(e){ console.error('Firebase init failed:', e); firebaseReady = false; }
+
+function sanitizeKey(key){
+  // Realtime Database paths can't contain . $ # [ ] or /
+  return String(key).replace(/[.$#\[\]/]/g, '_');
+}
+
+// Drop-in replacement for the window.storage API this app was originally built
+// against: shared:true goes to Firebase (visible to your whole team), shared:false
+// stays in this browser's own localStorage (per-device, e.g. "last code I used").
+const storage = {
+  async get(key, shared){
+    if (shared === false){
+      const raw = localStorage.getItem(key);
+      return raw != null ? { key, value: raw, shared } : null;
+    }
+    if (!firebaseReady) throw new Error('Firebase is not configured yet — see firebaseConfig at the top of the script');
+    const snap = await fbDb.ref(sanitizeKey(key)).once('value');
+    return snap.exists() ? { key, value: snap.val(), shared } : null;
+  },
+  async set(key, value, shared){
+    if (shared === false){
+      localStorage.setItem(key, value);
+      return { key, value, shared };
+    }
+    if (!firebaseReady) throw new Error('Firebase is not configured yet — see firebaseConfig at the top of the script');
+    await fbDb.ref(sanitizeKey(key)).set(value);
+    return { key, value, shared };
+  },
+  async delete(key, shared){
+    if (shared === false){
+      localStorage.removeItem(key);
+      return { key, deleted: true, shared };
+    }
+    if (!firebaseReady) throw new Error('Firebase is not configured yet — see firebaseConfig at the top of the script');
+    await fbDb.ref(sanitizeKey(key)).remove();
+    return { key, deleted: true, shared };
+  }
+};
 
 let STORAGE_PREFIX = 'wtc8-event-';
 let LAST_CODE_KEY = 'wtc8-last-code';
@@ -438,6 +515,10 @@ function setSync(status){
 }
 
 /* ---------------- auth: per-team registration & namespaced storage ---------------- */
+function cryptoAvailable(){
+  return typeof crypto !== 'undefined' && !!crypto.subtle;
+}
+const INSECURE_CONTEXT_MSG = 'Password handling needs a secure connection (https://) or localhost — this page was opened in a way that doesn\u2019t provide that (e.g. directly from a file). Try it through the hosted link instead.';
 async function hashPassword(pw){
   const enc = new TextEncoder().encode(pw);
   const digest = await crypto.subtle.digest('SHA-256', enc);
@@ -456,13 +537,13 @@ function applyNamespace(slug){
 }
 async function loadAuthRegistry(){
   try {
-    const res = await window.storage.get(AUTH_REGISTRY_KEY, true);
+    const res = await storage.get(AUTH_REGISTRY_KEY, true);
     authRegistryCache = (res && res.value) ? JSON.parse(res.value) : { teams: [] };
   } catch(e){ authRegistryCache = { teams: [] }; }
   return authRegistryCache;
 }
 async function saveAuthRegistry(reg){
-  await window.storage.set(AUTH_REGISTRY_KEY, JSON.stringify(reg), true);
+  await storage.set(AUTH_REGISTRY_KEY, JSON.stringify(reg), true);
 }
 function checkAuth(){
   try {
@@ -484,7 +565,7 @@ function clearAuthed(){
 /* ---------------- shared index (list of all teams & events) ---------------- */
 async function loadIndex(){
   try {
-    const res = await window.storage.get(INDEX_KEY, true);
+    const res = await storage.get(INDEX_KEY, true);
     if (res && res.value) return JSON.parse(res.value);
   } catch(e){ /* none yet */ }
   return { teams: [], events: [] };
@@ -498,7 +579,7 @@ async function upsertIndexEntry(kind, entry){
     if (!idx[kind]) idx[kind] = [];
     const i = idx[kind].findIndex(x=>x.code===entry.code);
     if (i>=0) idx[kind][i] = entry; else idx[kind].push(entry);
-    await window.storage.set(INDEX_KEY, JSON.stringify(idx), true);
+    await storage.set(INDEX_KEY, JSON.stringify(idx), true);
     indexCache = idx;
   } catch(e){ /* non-fatal */ }
 }
@@ -506,14 +587,14 @@ async function removeIndexEntry(kind, code){
   try {
     const idx = await loadIndex();
     idx[kind] = (idx[kind]||[]).filter(x=>x.code!==code);
-    await window.storage.set(INDEX_KEY, JSON.stringify(idx), true);
+    await storage.set(INDEX_KEY, JSON.stringify(idx), true);
     indexCache = idx;
   } catch(e){ /* non-fatal */ }
 }
 
 /* ---------------- storage ---------------- */
 async function persistLastCode(){
-  try { await window.storage.set(LAST_CODE_KEY, JSON.stringify({code: currentCode}), false); }
+  try { await storage.set(LAST_CODE_KEY, JSON.stringify({code: currentCode}), false); }
   catch(e){ /* non-fatal */ }
 }
 function scheduleSave(){
@@ -524,7 +605,7 @@ function scheduleSave(){
 async function saveState(){
   if (!state || !currentCode) return;
   try {
-    await window.storage.set(STORAGE_PREFIX+currentCode, JSON.stringify(state), true);
+    await storage.set(STORAGE_PREFIX+currentCode, JSON.stringify(state), true);
     setSync('ok');
     await upsertIndexEntry('events', { code: currentCode, name: state.name, teamA: state.teamA.name, teamB: state.teamB.name });
   } catch(e){ setSync('err'); }
@@ -532,7 +613,7 @@ async function saveState(){
 async function tryLoad(code){
   currentCode = code.trim().toUpperCase();
   try {
-    const res = await window.storage.get(STORAGE_PREFIX+currentCode, true);
+    const res = await storage.get(STORAGE_PREFIX+currentCode, true);
     if (res && res.value){
       state = JSON.parse(res.value); migrateState();
       await upsertIndexEntry('events', { code: currentCode, name: state.name, teamA: state.teamA.name, teamB: state.teamB.name });
@@ -545,7 +626,7 @@ async function tryLoad(code){
 
 /* ---------------- team profile storage ---------------- */
 async function persistLastTeamCode(){
-  try { await window.storage.set(LAST_TEAM_CODE_KEY, JSON.stringify({code: teamProfileCode}), false); }
+  try { await storage.set(LAST_TEAM_CODE_KEY, JSON.stringify({code: teamProfileCode}), false); }
   catch(e){ /* non-fatal */ }
 }
 function scheduleSaveProfile(){
@@ -556,7 +637,7 @@ function scheduleSaveProfile(){
 async function saveTeamProfile(){
   if (!teamProfile || !teamProfileCode) return;
   try {
-    await window.storage.set(TEAM_PREFIX+teamProfileCode, JSON.stringify(teamProfile), true);
+    await storage.set(TEAM_PREFIX+teamProfileCode, JSON.stringify(teamProfile), true);
     setSync('ok');
     await upsertIndexEntry('teams', { code: teamProfileCode, name: teamProfile.name });
   } catch(e){ setSync('err'); }
@@ -564,7 +645,7 @@ async function saveTeamProfile(){
 async function tryLoadTeamProfile(code){
   teamProfileCode = code.trim().toUpperCase();
   try {
-    const res = await window.storage.get(TEAM_PREFIX+teamProfileCode, true);
+    const res = await storage.get(TEAM_PREFIX+teamProfileCode, true);
     if (res && res.value){
       teamProfile = JSON.parse(res.value); migrateTeamProfile();
       await upsertIndexEntry('teams', { code: teamProfileCode, name: teamProfile.name });
@@ -716,7 +797,7 @@ async function refreshLinkedProfiles(){
   const codes = [state.teamA && state.teamA.linkedProfileCode, state.teamB && state.teamB.linkedProfileCode].filter(Boolean);
   for (const code of codes){
     try {
-      const res = await window.storage.get(TEAM_PREFIX+code, true);
+      const res = await storage.get(TEAM_PREFIX+code, true);
       if (res && res.value) linkedProfileCache[code] = JSON.parse(res.value);
     } catch(e){ /* keep whatever was cached before, if anything */ }
   }
@@ -725,7 +806,7 @@ async function refreshTrackedOpponentProfiles(){
   if (!teamProfile || !teamProfile.trackedOpponents) return;
   for (const code of teamProfile.trackedOpponents){
     try {
-      const res = await window.storage.get(TEAM_PREFIX+code, true);
+      const res = await storage.get(TEAM_PREFIX+code, true);
       if (res && res.value) linkedProfileCache[code] = JSON.parse(res.value);
     } catch(e){ /* keep whatever was cached before, if anything */ }
   }
@@ -2195,14 +2276,19 @@ app.addEventListener('click', async (e)=>{
     const pw = pwInput ? pwInput.value : '';
     if (!slug){ if (errEl) errEl.textContent = 'Choose your team first.'; return; }
     if (!pw){ if (errEl) errEl.textContent = 'Enter your password.'; return; }
+    if (!cryptoAvailable()){ if (errEl) errEl.textContent = INSECURE_CONTEXT_MSG; return; }
     await loadAuthRegistry();
     const entry = authRegistryCache.teams.find(t=>t.slug===slug);
     if (!entry){ if (errEl) errEl.textContent = 'Team not found — try refreshing the page.'; return; }
-    const hash = await hashPassword(pw);
-    if (hash !== entry.passwordHash){ if (errEl) errEl.textContent = 'Incorrect password.'; return; }
-    setAuthed(slug);
-    await attemptAutoLoad();
-    route();
+    try {
+      const hash = await hashPassword(pw);
+      if (hash !== entry.passwordHash){ if (errEl) errEl.textContent = 'Incorrect password.'; return; }
+      setAuthed(slug);
+      await attemptAutoLoad();
+      route();
+    } catch(err){
+      if (errEl) errEl.textContent = `Something went wrong logging in (${err.message||err}). Try again.`;
+    }
     return;
   }
   if (action === 'show-register'){
@@ -2226,18 +2312,23 @@ app.addEventListener('click', async (e)=>{
     if (!name){ if (errEl) errEl.textContent = 'Enter a team name.'; return; }
     if (!pw || pw.length < 4){ if (errEl) errEl.textContent = 'Password must be at least 4 characters.'; return; }
     if (pw !== pw2){ if (errEl) errEl.textContent = 'Passwords don\u2019t match.'; return; }
+    if (!cryptoAvailable()){ if (errEl) errEl.textContent = INSECURE_CONTEXT_MSG; return; }
     const slug = slugifyTeamName(name);
     await loadAuthRegistry();
     if (authRegistryCache.teams.some(t=>t.slug===slug || t.name.toLowerCase()===name.toLowerCase())){
       if (errEl) errEl.textContent = 'That team name is already registered — pick another, or log in if this is you.';
       return;
     }
-    const hash = await hashPassword(pw);
-    authRegistryCache.teams.push({ name, slug, passwordHash: hash });
-    await saveAuthRegistry(authRegistryCache);
-    setAuthed(slug);
-    await attemptAutoLoad();
-    route();
+    try {
+      const hash = await hashPassword(pw);
+      authRegistryCache.teams.push({ name, slug, passwordHash: hash });
+      await saveAuthRegistry(authRegistryCache);
+      setAuthed(slug);
+      await attemptAutoLoad();
+      route();
+    } catch(err){
+      if (errEl) errEl.textContent = `Something went wrong registering (${err.message||err}). Try again.`;
+    }
     return;
   }
   if (action === 'logout'){
@@ -2260,8 +2351,8 @@ app.addEventListener('click', async (e)=>{
     return;
   }
   if (action === 'go-home'){
-    try { await window.storage.delete(LAST_CODE_KEY, false); } catch(err){ /* non-fatal */ }
-    try { await window.storage.delete(LAST_TEAM_CODE_KEY, false); } catch(err){ /* non-fatal */ }
+    try { await storage.delete(LAST_CODE_KEY, false); } catch(err){ /* non-fatal */ }
+    try { await storage.delete(LAST_TEAM_CODE_KEY, false); } catch(err){ /* non-fatal */ }
     state = null; currentCode = null;
     teamProfile = null; teamProfileCode = null;
     mode = 'event';
@@ -2355,7 +2446,7 @@ app.addEventListener('click', async (e)=>{
   if (action === 'delete-team'){
     const code = el.dataset.code, name = el.dataset.name;
     if (!window.confirm(`Delete team profile "${name}" (${code})? This can't be undone.`)) return;
-    try { await window.storage.delete(TEAM_PREFIX+code, true); } catch(err){ /* non-fatal */ }
+    try { await storage.delete(TEAM_PREFIX+code, true); } catch(err){ /* non-fatal */ }
     await removeIndexEntry('teams', code);
     if (teamProfileCode === code){ teamProfile = null; teamProfileCode = null; }
     route();
@@ -2364,7 +2455,7 @@ app.addEventListener('click', async (e)=>{
   if (action === 'delete-event'){
     const code = el.dataset.code, name = el.dataset.name;
     if (!window.confirm(`Delete event "${name}" (${code})? This can't be undone.`)) return;
-    try { await window.storage.delete(STORAGE_PREFIX+code, true); } catch(err){ /* non-fatal */ }
+    try { await storage.delete(STORAGE_PREFIX+code, true); } catch(err){ /* non-fatal */ }
     await removeIndexEntry('events', code);
     if (currentCode === code){ state = null; currentCode = null; }
     route();
@@ -2385,7 +2476,7 @@ app.addEventListener('click', async (e)=>{
     if (!window.confirm(`Delete ${codes.length} ${noun}${codes.length!==1?'s':''}? This can't be undone.`)) return;
     const prefix = list === 'teams' ? TEAM_PREFIX : STORAGE_PREFIX;
     for (const code of codes){
-      try { await window.storage.delete(prefix+code, true); } catch(err){ /* non-fatal, keep going */ }
+      try { await storage.delete(prefix+code, true); } catch(err){ /* non-fatal, keep going */ }
       await removeIndexEntry(list, code);
       if (list === 'teams' && teamProfileCode === code){ teamProfile = null; teamProfileCode = null; }
       if (list === 'events' && currentCode === code){ state = null; currentCode = null; }
@@ -2411,7 +2502,7 @@ app.addEventListener('click', async (e)=>{
   if (action === 'refresh'){
     if (currentCode){
       try{
-        const res = await window.storage.get(STORAGE_PREFIX+currentCode, true);
+        const res = await storage.get(STORAGE_PREFIX+currentCode, true);
         if (res && res.value){ state = JSON.parse(res.value); migrateState(); }
       }catch(err){ /* ignore */ }
     }
@@ -2474,7 +2565,7 @@ app.addEventListener('click', async (e)=>{
   if (action === 'refresh-profile'){
     if (teamProfileCode){
       try{
-        const res = await window.storage.get(TEAM_PREFIX+teamProfileCode, true);
+        const res = await storage.get(TEAM_PREFIX+teamProfileCode, true);
         if (res && res.value){ teamProfile = JSON.parse(res.value); migrateTeamProfile(); }
       }catch(err){ /* ignore */ }
     }
@@ -2487,7 +2578,7 @@ app.addEventListener('click', async (e)=>{
     mode = 'team';
     if (!teamProfile){
       try {
-        const last = await window.storage.get(LAST_TEAM_CODE_KEY, false);
+        const last = await storage.get(LAST_TEAM_CODE_KEY, false);
         if (last && last.value){
           const code = JSON.parse(last.value).code;
           await tryLoadTeamProfile(code);
@@ -2549,7 +2640,7 @@ app.addEventListener('click', async (e)=>{
     const code = (codeInput ? codeInput.value : '').trim().toUpperCase();
     if (!code){ if (errEl) errEl.textContent = 'Choose or enter a team profile first.'; return; }
     try {
-      const res = await window.storage.get(TEAM_PREFIX+code, true);
+      const res = await storage.get(TEAM_PREFIX+code, true);
       if (res && res.value){
         const profile = JSON.parse(res.value);
         const target = el.dataset.target === 'A' ? state.teamA : state.teamB;
@@ -2898,10 +2989,20 @@ app.addEventListener('keydown', (e)=>{
 });
 
 /* ---------------- boot ---------------- */
+function notConfiguredHTML(){
+  return `
+  <div class="hud-header"><div class="hud-brand"><span class="bracket">[</span> 8-MAN MATCHUP CONSOLE <span class="bracket">]</span></div></div>
+  <div class="panel landing-card">
+    <div class="eyebrow" style="color:var(--warn);">SETUP NEEDED</div>
+    <h2>Firebase isn't configured yet</h2>
+    <p class="dim" style="font-size:13px;">This page can't save or sync anything until it's connected to a Firebase project. Open this file's source, find the <code>firebaseConfig</code> object near the top of the script, and paste in your own project's values (Firebase console → Project settings → Your apps). Full steps are in the comment right above it.</p>
+    <p class="note">Once that's filled in, reload this page.</p>
+  </div>`;
+}
 async function attemptAutoLoad(){
   await refreshIndex();
   try {
-    const last = await window.storage.get(LAST_CODE_KEY, false);
+    const last = await storage.get(LAST_CODE_KEY, false);
     if (last && last.value){
       const code = JSON.parse(last.value).code;
       const found = await tryLoad(code);
@@ -2910,6 +3011,7 @@ async function attemptAutoLoad(){
   } catch(e){ /* fall through to hub */ }
 }
 (async function init(){
+  if (!firebaseReady){ app.innerHTML = notConfiguredHTML(); return; }
   const urlParams = new URLSearchParams(window.location.search);
   const spectateParam = urlParams.get('spectate');
   if (spectateParam){
