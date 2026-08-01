@@ -162,8 +162,8 @@ label{display:block;}
 .matchup-matrix th, .matchup-matrix td{padding:5px 6px;text-align:center;border:1px solid var(--line-soft);}
 .matchup-matrix th{font-family:var(--font-mono);font-size:9px;letter-spacing:.02em;color:var(--text-dim);font-weight:500;}
 .matchup-matrix .matrix-name{text-align:left;font-size:12px;white-space:nowrap;color:var(--text);}
-.matchup-matrix tr.row-highlight{background:var(--gold-soft);}
-.matchup-matrix tr.row-highlight td.matrix-name{color:var(--gold);font-weight:700;border-left:3px solid var(--gold);padding-left:6px;}
+.matchup-matrix th.col-highlight,.matchup-matrix td.col-highlight{background:var(--gold-soft);}
+.matchup-matrix th.col-highlight{color:var(--gold);font-weight:700;border-top:3px solid var(--gold);}
 .matchup-matrix select{width:52px;padding:4px 2px;font-size:12px;background:var(--panel-alt);border:1px solid var(--line);color:var(--text);border-radius:3px;font-weight:600;}
 .matchup-matrix select.r1{background:var(--r1);border-color:var(--r1);color:#fff;}
 .matchup-matrix select.r2{background:var(--r2);border-color:var(--r2);color:#fff;}
@@ -473,6 +473,10 @@ let profileSaveTimer = null;
 let mode = 'event'; // 'event' | 'team'
 let authenticated = false;
 let indexCache = { teams: [], events: [] };
+let bcpImportPreview = null;
+let bcpImportSummary = null;
+let bulkMode = { teams: false, events: false };
+let bulkSelected = { teams: new Set(), events: new Set() };
 
 const app = document.getElementById('app');
 
@@ -552,7 +556,7 @@ async function saveState(){
   try {
     await storage.set(STORAGE_PREFIX+currentCode, JSON.stringify(state), true);
     setSync('ok');
-    await upsertIndexEntry('events', { code: currentCode, teamA: state.teamA.name, teamB: state.teamB.name });
+    await upsertIndexEntry('events', { code: currentCode, name: state.name, teamA: state.teamA.name, teamB: state.teamB.name });
   } catch(e){ setSync('err'); }
 }
 async function tryLoad(code){
@@ -561,7 +565,7 @@ async function tryLoad(code){
     const res = await storage.get(STORAGE_PREFIX+currentCode, true);
     if (res && res.value){
       state = JSON.parse(res.value); migrateState();
-      await upsertIndexEntry('events', { code: currentCode, teamA: state.teamA.name, teamB: state.teamB.name });
+      await upsertIndexEntry('events', { code: currentCode, name: state.name, teamA: state.teamA.name, teamB: state.teamB.name });
       await refreshLinkedProfiles();
       return true;
     }
@@ -605,6 +609,8 @@ function migrateTeamProfile(){
   if (!teamProfile.dispositions) teamProfile.dispositions = defaultDispositions();
   if (!teamProfile.matchupRatings) teamProfile.matchupRatings = blankMatchupRatings();
   if (!teamProfile.bcpLinks) teamProfile.bcpLinks = Array(8).fill('');
+  if (!teamProfile.trackedOpponents) teamProfile.trackedOpponents = [];
+  if (!teamProfile.teamMatchupRatings) teamProfile.teamMatchupRatings = blankMatchupRatings();
 }
 function newTeamProfile(code){
   return {
@@ -614,12 +620,16 @@ function newTeamProfile(code){
     dispositions: defaultDispositions(),
     factions: Array(8).fill(''),
     matchupRatings: blankMatchupRatings(),
-    bcpLinks: Array(8).fill('')
+    bcpLinks: Array(8).fill(''),
+    trackedOpponents: [],
+    teamMatchupRatings: blankMatchupRatings()
   };
 }
 function migrateState(){
   // backfill fields for events saved before they existed, so old saves keep working
   if (!state) return;
+  if (state.name === undefined) state.name = '';
+  if (!state.opponentTeams) state.opponentTeams = [];
   [state.teamA, state.teamB].forEach(team=>{
     if (team && !team.factions) team.factions = Array(8).fill('');
     if (team && !team.dispositions) team.dispositions = defaultDispositions();
@@ -627,6 +637,7 @@ function migrateState(){
     if (team && !team.bcpLinks) team.bcpLinks = Array(8).fill('');
   });
   (state.rounds||[]).forEach(round=>{
+    if (round.oppName === undefined) round.oppName = state.teamB ? state.teamB.name : null;
     (round.pairings||[]).forEach(p=>{
       if (!p.battleRound) p.battleRound = 'D';
       if (p.activeTurn === undefined) p.activeTurn = null;
@@ -651,6 +662,71 @@ function migrateState(){
 
 /* ---------------- model ---------------- */
 const DISPOSITIONS = ['Disruption','Take and Hold','Purge the Foe','Priority Assets','Reconnaissance'];
+function extractBcpEventName(doc){
+  const title = doc.querySelector('title');
+  if (title && title.textContent){
+    const t = title.textContent.split('|')[0].trim();
+    if (t) return t;
+  }
+  const heading = doc.querySelector('h1, h2, h3');
+  if (heading && heading.textContent && heading.textContent.trim()) return heading.textContent.trim();
+  return '';
+}
+function parseBcpRosterHtml(htmlText){
+  const doc = new DOMParser().parseFromString(htmlText, 'text/html');
+  const eventName = extractBcpEventName(doc);
+  const root = doc.body || doc.documentElement;
+  const items = [];
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  let node = walker.currentNode;
+  while (node){
+    if (node.tagName === 'P'){
+      const text = (node.textContent || '').trim();
+      if (text) items.push({type:'p', text});
+    } else if (node.tagName === 'A'){
+      const href = node.getAttribute('href') || '';
+      const m = href.match(/\/list\/[A-Za-z0-9_-]+/);
+      if (m) items.push({type:'link', href: m[0]});
+    }
+    node = walker.nextNode();
+  }
+  const captainIdxs = [];
+  items.forEach((it,i)=>{ if (it.type==='p' && /^team captain:/i.test(it.text)) captainIdxs.push(i); });
+  if (!captainIdxs.length) return { teams: [], eventName, error: 'No "Team Captain:" rows found — this doesn\'t look like a BCP roster page. Make sure you copied the Roster tab, and grabbed the whole page (or at least the section with all the teams), not just one team.' };
+  const dispositionsLower = DISPOSITIONS.map(d=>d.toLowerCase());
+  const teams = captainIdxs.map((capIdx, teamIdx)=>{
+    const teamName = (items[capIdx-1] && items[capIdx-1].type==='p') ? items[capIdx-1].text : `Team ${teamIdx+1}`;
+    const sectionEnd = (teamIdx+1 < captainIdxs.length) ? captainIdxs[teamIdx+1]-1 : items.length;
+    const players = [];
+    let cur = null;
+    for (let i=capIdx+1; i<sectionEnd; i++){
+      const it = items[i];
+      if (it.type === 'link'){
+        if (cur) cur.listLink = 'https://www.bestcoastpairings.com' + it.href;
+        continue;
+      }
+      const dashIdx = it.text.lastIndexOf(' - ');
+      let matchedDisposition = null;
+      if (dashIdx >= 0){
+        const tail = it.text.slice(dashIdx+3).trim().toLowerCase();
+        const dIdx = dispositionsLower.indexOf(tail);
+        if (dIdx >= 0) matchedDisposition = DISPOSITIONS[dIdx];
+      }
+      if (matchedDisposition && cur){
+        cur.faction = it.text.slice(0, dashIdx).trim();
+        cur.disposition = matchedDisposition;
+      } else {
+        let name = it.text;
+        const clubDash = name.lastIndexOf(' - ');
+        if (clubDash >= 0) name = name.slice(0, clubDash).trim();
+        cur = { name, faction:'', disposition:'', listLink:'' };
+        players.push(cur);
+      }
+    }
+    return { name: teamName, players };
+  });
+  return { teams, eventName, error: null };
+}
 function blankPlayers(prefix){
   return Array.from({length:8}, (_,i)=>`${prefix} ${i+1}`);
 }
@@ -666,6 +742,15 @@ async function refreshLinkedProfiles(){
   if (!state) return;
   const codes = [state.teamA && state.teamA.linkedProfileCode, state.teamB && state.teamB.linkedProfileCode].filter(Boolean);
   for (const code of codes){
+    try {
+      const res = await storage.get(TEAM_PREFIX+code, true);
+      if (res && res.value) linkedProfileCache[code] = JSON.parse(res.value);
+    } catch(e){ /* keep whatever was cached before, if anything */ }
+  }
+}
+async function refreshTrackedOpponentProfiles(){
+  if (!teamProfile || !teamProfile.trackedOpponents) return;
+  for (const code of teamProfile.trackedOpponents){
     try {
       const res = await storage.get(TEAM_PREFIX+code, true);
       if (res && res.value) linkedProfileCache[code] = JSON.parse(res.value);
@@ -720,6 +805,40 @@ function getMatchupRating(side, playerName, opponentDisposition){
   const r = team.matchupRatings[idx][opponentDisposition];
   return (r===undefined || r===null || r==='') ? null : r;
 }
+function findTrackedOpponentCode(myLinked, oppTeam){
+  if (!myLinked || !myLinked.trackedOpponents || !myLinked.trackedOpponents.length) return null;
+  // Prefer an explicit link — the opponent's profile was formally imported into this event
+  if (oppTeam.linkedProfileCode && myLinked.trackedOpponents.includes(oppTeam.linkedProfileCode)){
+    return oppTeam.linkedProfileCode;
+  }
+  // Fall back to matching by team name — covers the common case where the
+  // opponent's roster was just typed in for this event rather than imported
+  // via their profile code (which I usually wouldn't have on hand for them).
+  const oppNameLower = (oppTeam.name || '').trim().toLowerCase();
+  if (!oppNameLower) return null;
+  for (const code of myLinked.trackedOpponents){
+    const idxEntry = indexCache.teams.find(t=>t.code===code);
+    if (idxEntry && idxEntry.name && idxEntry.name.trim().toLowerCase() === oppNameLower) return code;
+  }
+  return null;
+}
+function getEffectiveMatchupRating(side, playerName, oppSide, oppName){
+  // Prefer a specific opponent-team rating (from a tracked opponent-specific
+  // matrix) over the generic disposition-based one, when this opponent's team
+  // is one I'm tracking and I've rated this exact player.
+  const myTeam = (side==='a' || side==='A') ? state.teamA : state.teamB;
+  const oppTeam = (oppSide==='a' || oppSide==='A') ? state.teamA : state.teamB;
+  const myLinked = myTeam.linkedProfileCode ? linkedProfileCache[myTeam.linkedProfileCode] : null;
+  const oppCode = findTrackedOpponentCode(myLinked, oppTeam);
+  if (oppCode){
+    const myIdx = myLinked.players ? myLinked.players.indexOf(playerName) : -1;
+    if (myIdx>=0 && myLinked.teamMatchupRatings && myLinked.teamMatchupRatings[myIdx]){
+      const specific = myLinked.teamMatchupRatings[myIdx][`${oppCode}::${oppName}`];
+      if (specific!=null && specific!=='') return specific;
+    }
+  }
+  return getMatchupRating(side, playerName, getDisposition(oppSide, oppName));
+}
 function dispTag(side, name){
   const d = getDisposition(side, name);
   const f = getFaction(side, name);
@@ -731,12 +850,18 @@ function listLinkHTML(side, name){
   if (!url) return '';
   return ` <a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="list-link">📋 list</a>`;
 }
+function plainFactionTag(faction){
+  return faction ? ` <span class="mono dim" style="font-size:10px;">(${esc(faction)})</span>` : '';
+}
+function plainListLink(url){
+  return url ? ` <a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="list-link">📋 list</a>` : '';
+}
 function ratingBadgeHTML(rating){
   if (rating == null) return '';
   return `<span class="rating-badge r${rating}">${'★'.repeat(rating)}${'☆'.repeat(5-rating)} ${rating}/5</span>`;
 }
 function compactRatingTag(side, playerName, oppSide, oppName){
-  const rating = getMatchupRating(side, playerName, getDisposition(oppSide, oppName));
+  const rating = getEffectiveMatchupRating(side, playerName, oppSide, oppName);
   return rating!=null ? ` <span class="rating-badge r${rating}">[${rating}/5]</span>` : '';
 }
 function dispositionSpread(team){
@@ -752,8 +877,10 @@ function dispositionSpread(team){
 function newEvent(code){
   return {
     code,
+    name: '',
     teamA:{ name:'Team Alpha', players: blankPlayers('Player'), dispositions: defaultDispositions(), factions: Array(8).fill(''), matchupRatings: blankMatchupRatings(), bcpLinks: Array(8).fill('') },
     teamB:{ name:'Team Beta', players: blankPlayers('Player'), dispositions: defaultDispositions(), factions: Array(8).fill(''), matchupRatings: blankMatchupRatings(), bcpLinks: Array(8).fill('') },
+    opponentTeams: [], // pool of {name, players, factions, dispositions, bcpLinks} — pick a new one each round
     tables: Array.from({length:8}, (_,i)=>({ id:i+1, label:`Table ${i+1}` })),
     scoringMode: 'wtc',
     setupComplete: false,
@@ -771,14 +898,15 @@ function freshChunk(){
     confirmed: []
   };
 }
-function newRound(number, playersA, playersB){
+function newRound(number, playersA, playersB, oppName){
   return {
     number,
     poolA: [...playersA],
     poolB: [...playersB],
     pairings: [],
     chunk: freshChunk(),
-    status: 'drafting'
+    status: 'drafting',
+    oppName: oppName || null // which opponent (by name) this round is against, for standings/history display
   };
 }
 function curRound(){ return state.rounds[state.currentRound]; }
@@ -887,23 +1015,103 @@ function teamProfileHeaderHTML(){
 /* ---------------- landing / hub ---------------- */
 function teamListHTML(){
   if (!indexCache.teams.length) return `<p class="note" style="margin-top:0;">No team profiles yet — create one below.</p>`;
-  return `<div class="pick-list">${indexCache.teams.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(t=>`
-    <div class="pick-row">
+  const bulk = bulkMode.teams;
+  const sorted = indexCache.teams.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  const toolbar = `<div class="btn-row" style="margin-bottom:8px;">
+    <button class="btn-ghost" data-action="toggle-bulk-mode" data-list="teams">${bulk ? 'Cancel' : 'Select multiple'}</button>
+    ${bulk ? `<button class="btn btn-primary" data-action="bulk-delete" data-list="teams" ${bulkSelected.teams.size===0?'disabled':''}>Delete ${bulkSelected.teams.size} selected</button>` : ''}
+  </div>`;
+  const rows = sorted.map(t=>{
+    if (bulk){
+      return `<div class="pick-row">
+        <label class="pick-btn" style="cursor:pointer;display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" data-action="toggle-bulk-select" data-list="teams" data-code="${esc(t.code)}" ${bulkSelected.teams.has(t.code)?'checked':''} style="width:auto;">
+          <span class="pick-name">${esc(t.name)}</span><span class="pick-code mono">${esc(t.code)}</span>
+        </label>
+      </div>`;
+    }
+    return `<div class="pick-row">
       <button class="pick-btn" data-action="pick-team" data-code="${esc(t.code)}">
         <span class="pick-name">${esc(t.name)}</span><span class="pick-code mono">${esc(t.code)}</span>
       </button>
       <button class="btn-ghost pick-del" data-action="delete-team" data-code="${esc(t.code)}" data-name="${esc(t.name)}" title="Delete this team profile">🗑</button>
-    </div>`).join('')}</div>`;
+    </div>`;
+  }).join('');
+  return toolbar + `<div class="pick-list">${rows}</div>`;
 }
 function eventListHTML(){
   if (!indexCache.events.length) return `<p class="note" style="margin-top:0;">No events yet — create one below.</p>`;
-  return `<div class="pick-list">${indexCache.events.slice().sort((a,b)=>((a.teamA||'')+(a.teamB||'')).localeCompare((b.teamA||'')+(b.teamB||''))).map(e=>`
-    <div class="pick-row">
+  const bulk = bulkMode.events;
+  const sorted = indexCache.events.slice().sort((a,b)=>((a.name||a.teamA||'')+(a.teamB||'')).localeCompare((b.name||b.teamA||'')+(b.teamB||'')));
+  const toolbar = `<div class="btn-row" style="margin-bottom:8px;">
+    <button class="btn-ghost" data-action="toggle-bulk-mode" data-list="events">${bulk ? 'Cancel' : 'Select multiple'}</button>
+    ${bulk ? `<button class="btn btn-primary" data-action="bulk-delete" data-list="events" ${bulkSelected.events.size===0?'disabled':''}>Delete ${bulkSelected.events.size} selected</button>` : ''}
+  </div>`;
+  const rows = sorted.map(e=>{
+    const label = e.name ? e.name : `${e.teamA} vs ${e.teamB}`;
+    if (bulk){
+      return `<div class="pick-row">
+        <label class="pick-btn" style="cursor:pointer;display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" data-action="toggle-bulk-select" data-list="events" data-code="${esc(e.code)}" ${bulkSelected.events.has(e.code)?'checked':''} style="width:auto;">
+          <span class="pick-name">${esc(label)}</span><span class="pick-code mono">${esc(e.code)}</span>
+        </label>
+      </div>`;
+    }
+    return `<div class="pick-row">
       <button class="pick-btn" data-action="pick-event" data-code="${esc(e.code)}">
-        <span class="pick-name">${esc(e.teamA)} vs ${esc(e.teamB)}</span><span class="pick-code mono">${esc(e.code)}</span>
+        <span class="pick-name">${esc(label)}</span><span class="pick-code mono">${esc(e.code)}</span>
       </button>
-      <button class="btn-ghost pick-del" data-action="delete-event" data-code="${esc(e.code)}" data-name="${esc(e.teamA)} vs ${esc(e.teamB)}" title="Delete this event">🗑</button>
-    </div>`).join('')}</div>`;
+      <button class="btn-ghost pick-del" data-action="delete-event" data-code="${esc(e.code)}" data-name="${esc(label)}" title="Delete this event">🗑</button>
+    </div>`;
+  }).join('');
+  return toolbar + `<div class="pick-list">${rows}</div>`;
+}
+function bcpImportPanelHTML(){
+  let body = `
+    <input type="file" id="bcp-import-file" accept=".html,.htm,.txt" data-action="bcp-file-selected">
+    <p class="note" style="margin-top:8px;">Upload the saved HTML of a BCP event's Roster tab to create a new event — your team plus a pool of opponent teams to pick from each round. Grab it via Inspect → Copy outerHTML on the roster content, save that to a .html or .txt file, then upload it here.</p>`;
+  if (bcpImportPreview){
+    if (bcpImportPreview.error){
+      body += `<p class="error-text">${esc(bcpImportPreview.error)}</p>`;
+    } else if (!bcpImportPreview.teams.length){
+      body += `<p class="error-text">No teams found in that file.</p>`;
+    } else {
+      body += `
+      <div class="field-label" style="margin-top:10px;">Event name</div>
+      <input type="text" id="bcp-import-event-name" value="${esc(bcpImportPreview.eventName)}" style="width:100%;">
+      <p class="note" style="margin-top:10px;margin-bottom:4px;">Which team is yours?</p>
+      <div class="pool-list">
+        ${bcpImportPreview.teams.map((t,i)=>{
+          const withLinks = t.players.filter(p=>p.listLink).length;
+          return `<label class="pool-item" style="cursor:pointer;">
+            <input type="radio" name="bcp-mine" data-action="set-bcp-mine" data-idx="${i}" ${t.isMine?'checked':''}>
+            <span>${esc(t.name)} <span class="dim mono" style="font-size:11px;">(${t.players.length} player${t.players.length!==1?'s':''}, ${withLinks}/${t.players.length} with list links)</span></span>
+          </label>`;
+        }).join('')}
+      </div>
+      <p class="note" style="margin-top:10px;margin-bottom:4px;">Which others should go into the opponent pool?</p>
+      <div class="pool-list">
+        ${bcpImportPreview.teams.map((t,i)=>{
+          if (t.isMine) return '';
+          return `<label class="pool-item" style="cursor:pointer;">
+            <input type="checkbox" data-action="toggle-bcp-team" data-idx="${i}" ${t.selected?'checked':''}>
+            <span>${esc(t.name)} <span class="dim mono" style="font-size:11px;">(${t.players.length} player${t.players.length!==1?'s':''})</span></span>
+          </label>`;
+        }).join('')}
+      </div>
+      <div class="btn-row" style="margin-top:10px;">
+        <button class="btn btn-primary" data-action="confirm-bcp-import">Create event →</button>
+        <button class="btn-ghost" data-action="cancel-bcp-import">Cancel</button>
+      </div>`;
+    }
+  }
+  if (bcpImportSummary){
+    body += `<p class="note" style="margin-top:10px;color:var(--good);">✓ Created event "${esc(bcpImportSummary.eventName)}" — ${esc(bcpImportSummary.myTeamName)} vs a pool of ${bcpImportSummary.opponentCount} opponent team${bcpImportSummary.opponentCount!==1?'s':''}.</p>`;
+  }
+  return `<div class="panel">
+    <div class="panel-title"><h3>📥 Import event from BCP</h3></div>
+    ${body}
+  </div>`;
 }
 function landingHTML(){
   return `
@@ -920,6 +1128,7 @@ function landingHTML(){
     ${teamListHTML()}
     <div class="btn-row"><button class="btn btn-primary" data-action="create-team-profile">+ New team profile</button></div>
   </div>
+  ${bcpImportPanelHTML()}
   <div class="panel">
     <div class="panel-title"><h2>Events</h2><span class="eyebrow">LIVE PAIRING SESSIONS</span></div>
     ${eventListHTML()}
@@ -949,6 +1158,66 @@ function landingHTML(){
   </div>`;
 }
 
+function teamMatrixHTML(team){
+  const opponents = (team.trackedOpponents || []).map(code => {
+    const found = indexCache.teams.find(t=>t.code===code);
+    const full = linkedProfileCache[code];
+    return {
+      code,
+      name: found ? found.name : code,
+      players: (full && full.players) ? full.players : [],
+      factions: (full && full.factions) ? full.factions : [],
+      bcpLinks: (full && full.bcpLinks) ? full.bcpLinks : []
+    };
+  });
+  if (!opponents.length){
+    return `<p class="note" style="margin-top:0;">No opponent teams added yet — pick one below to start tracking.</p>`;
+  }
+  return opponents.map(o => opponentMatrixBlockHTML(team, o)).join('');
+}
+function opponentMatrixBlockHTML(team, o){
+  const headerCells = team.players.map((p,i)=>`<th>${esc(p)}${plainFactionTag(team.factions[i])}${plainListLink(team.bcpLinks[i])}</th>`).join('');
+  const oppRoster = o.players.length ? o.players : [null]; // null = no roster yet, still show one placeholder row
+  const rows = oppRoster.map((op, opIdx)=>{
+    if (op === null){
+      return `<tr><td class="matrix-name dim">no roster yet</td>${team.players.map(()=>`<td><span class="dim">—</span></td>`).join('')}</tr>`;
+    }
+    const oppLabel = `<td class="matrix-name">${esc(op)}${plainFactionTag(o.factions[opIdx])}${plainListLink(o.bcpLinks[opIdx])}</td>`;
+    const ratingCells = team.players.map((p,i)=>{
+      const ratings = (team.teamMatchupRatings && team.teamMatchupRatings[i]) || {};
+      const key = `${o.code}::${op}`;
+      const val = ratings[key]!=null ? ratings[key] : '';
+      return `<td><select class="${val!==''?'r'+val:''}" data-action="set-team-matchup" data-idx="${i}" data-opponent="${esc(key)}">
+        <option value=""${val===''?' selected':''}>—</option>
+        ${[1,2,3,4,5].map(n=>`<option value="${n}" ${String(val)===String(n)?'selected':''}>${n}</option>`).join('')}
+      </select></td>`;
+    }).join('');
+    return `<tr>${oppLabel}${ratingCells}</tr>`;
+  }).join('');
+  return `<div style="margin-bottom:18px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+      <span style="font-family:var(--font-display);font-size:14px;">${esc(o.name)}</span>
+      <button type="button" class="btn-ghost" data-action="remove-tracked-opponent" data-opponent="${esc(o.code)}" style="padding:1px 5px;font-size:9px;" title="Stop tracking this team">✕ remove</button>
+    </div>
+    <div class="matrix-scroll"><table class="matchup-matrix">
+      <thead><tr><th></th>${headerCells}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </div>`;
+}
+function addOpponentPickerHTML(team){
+  const tracked = new Set(team.trackedOpponents || []);
+  const available = indexCache.teams.filter(t => t.code !== team.code && !tracked.has(t.code));
+  if (!available.length){
+    return `<p class="note" style="margin-top:8px;">${indexCache.teams.length<=1 ? 'No other teams in the system yet — once one exists, it will show up here.' : 'All other teams in the system are already being tracked.'}</p>`;
+  }
+  return `<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;">
+    <select id="add-opponent-select">
+      ${available.map(t=>`<option value="${esc(t.code)}">${esc(t.name)} (${esc(t.code)})</option>`).join('')}
+    </select>
+    <button class="btn" data-action="add-tracked-opponent">+ Add opponent team</button>
+  </div>`;
+}
 function teamProfileBodyHTML(){
   return `
   <div class="panel">
@@ -963,6 +1232,13 @@ function teamProfileBodyHTML(){
     <div class="panel-title"><h3>Matchup ratings</h3></div>
     <p class="note" style="margin-top:0;">1 (bad matchup) to 5 (good matchup) against each Force Disposition you might face. This travels with the profile and can be pulled into any event.</p>
     ${matchupMatrixHTML('p', teamProfile)}
+    ${ratingKeyHTML()}
+  </div>
+  <div class="panel">
+    <div class="panel-title"><h3>Matchups vs specific teams</h3></div>
+    <p class="note" style="margin-top:0;">Rate your players against particular opponent teams already in the system — useful for recurring rivals, separate from the generic disposition matrix above.</p>
+    ${teamMatrixHTML(teamProfile)}
+    ${addOpponentPickerHTML(teamProfile)}
     ${ratingKeyHTML()}
   </div>
   <div class="panel">
@@ -995,19 +1271,20 @@ function dispositionSpreadHTML(team){
     : `<span style="color:var(--warn)">⚠ per the 11th ed Teams Event Companion, an 8-player roster should carry every Force Disposition at least once, with exactly three doubled up (2/2/2/1/1)</span>`}</div>`;
 }
 function matchupMatrixHTML(side, team){
-  const rows = team.players.map((p,i)=>{
-    const ratings = team.matchupRatings[i] || {};
-    const cells = DISPOSITIONS.map(d=>{
+  const headerCells = team.players.map(p=>`<th>${esc(p)}</th>`).join('');
+  const rows = DISPOSITIONS.map(d=>{
+    const cells = team.players.map((p,i)=>{
+      const ratings = team.matchupRatings[i] || {};
       const val = (ratings[d]!=null) ? ratings[d] : '';
       return `<td><select class="${val!==''?'r'+val:''}" data-action="set-matchup" data-side="${side}" data-idx="${i}" data-disp="${esc(d)}">
         <option value=""${val===''?' selected':''}>—</option>
         ${[1,2,3,4,5].map(n=>`<option value="${n}" ${String(val)===String(n)?'selected':''}>${n}</option>`).join('')}
       </select></td>`;
     }).join('');
-    return `<tr><td class="matrix-name">${esc(p)}</td>${cells}</tr>`;
+    return `<tr><td class="matrix-name">${esc(d)}</td>${cells}</tr>`;
   }).join('');
   return `<div class="matrix-scroll"><table class="matchup-matrix">
-    <thead><tr><th></th>${DISPOSITIONS.map(d=>`<th>${esc(d)}</th>`).join('')}</tr></thead>
+    <thead><tr><th></th>${headerCells}</tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
 }
@@ -1063,16 +1340,20 @@ function linkedRosterRowHTML(side, name, idx){
 }
 function matchupMatrixReadOnlyHTML(side, team, playersOverride, highlightPlayer){
   const players = playersOverride || team.players;
-  const rows = players.map((p)=>{
-    const cells = DISPOSITIONS.map(d=>{
-      const val = getMatchupRating(side, p, d);
-      return `<td>${val!=null ? `<span class="rating-cell r${val}">${val}</span>` : '<span class="dim">—</span>'}</td>`;
-    }).join('');
+  const headerCells = players.map(p=>{
     const isHighlighted = highlightPlayer && p === highlightPlayer;
-    return `<tr class="${isHighlighted ? 'row-highlight' : ''}"><td class="matrix-name">${esc(p)}</td>${cells}</tr>`;
+    return `<th class="${isHighlighted ? 'col-highlight' : ''}">${esc(p)}</th>`;
+  }).join('');
+  const rows = DISPOSITIONS.map(d=>{
+    const cells = players.map(p=>{
+      const val = getMatchupRating(side, p, d);
+      const isHighlighted = highlightPlayer && p === highlightPlayer;
+      return `<td class="${isHighlighted ? 'col-highlight' : ''}">${val!=null ? `<span class="rating-cell r${val}">${val}</span>` : '<span class="dim">—</span>'}</td>`;
+    }).join('');
+    return `<tr><td class="matrix-name">${esc(d)}</td>${cells}</tr>`;
   }).join('');
   return `<div class="matrix-scroll"><table class="matchup-matrix">
-    <thead><tr><th></th>${DISPOSITIONS.map(d=>`<th>${esc(d)}</th>`).join('')}</tr></thead>
+    <thead><tr><th></th>${headerCells}</tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
 }
@@ -1080,6 +1361,7 @@ function setupHTML(){
   const t = state.tables;
   const aLinked = !!state.teamA.linkedProfileCode;
   const bLinked = !!state.teamB.linkedProfileCode;
+  const needsFirstOpponent = state.opponentTeams.length > 0 && state.teamB.name === 'Team Beta';
   return `
   ${importProfileHTML()}
   <div class="panel">
@@ -1094,12 +1376,23 @@ function setupHTML(){
         ${dispositionSpreadHTML({dispositions: aLinked ? state.teamA.players.map(p=>getDisposition('a',p)) : state.teamA.dispositions})}
       </div>
       <div class="team-block b">
+        ${needsFirstOpponent ? `
+        <div class="side-title b" style="margin-bottom:8px;"><span class="swatch"></span>First opponent</div>
+        <p class="note" style="margin-top:0;">This event has a pool of ${state.opponentTeams.length} opponent team${state.opponentTeams.length!==1?'s':''} — pick who you're facing in Round 1:</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <select id="first-opponent-select">
+            ${state.opponentTeams.map((o,i)=>`<option value="${i}">${esc(o.name)}</option>`).join('')}
+          </select>
+          <button class="btn btn-primary" data-action="pick-first-opponent">Set opponent</button>
+        </div>` : `
         <input class="team-name-input" type="text" data-bind="teamB.name" value="${esc(state.teamB.name)}">
         ${linkedBadgeHTML('b', state.teamB)}
         <div class="roster-grid">
           ${state.teamB.players.map((p,i)=> bLinked ? linkedRosterRowHTML('b', p, i) : rosterRowHTML('b', p, i, state.teamB.dispositions[i], state.teamB.factions[i], state.teamB.bcpLinks[i])).join('')}
         </div>
         ${dispositionSpreadHTML({dispositions: bLinked ? state.teamB.players.map(p=>getDisposition('b',p)) : state.teamB.dispositions})}
+        ${state.opponentTeams.length ? `<p class="note" style="margin-top:8px;">Facing ${esc(state.teamB.name)} this round. <button type="button" class="btn-ghost" data-action="undo-first-opponent" style="padding:1px 6px;font-size:10px;">change</button></p>` : ''}
+        `}
       </div>
     </div>
   </div>
@@ -1109,6 +1402,18 @@ function setupHTML(){
     <div class="side-title a" style="margin-bottom:8px;"><span class="swatch"></span>${esc(state.teamA.name)}${aLinked?' <span class="mono dim" style="font-size:10px;">🔗 synced</span>':''}</div>
     ${aLinked ? matchupMatrixReadOnlyHTML('a', state.teamA) : matchupMatrixHTML('a', state.teamA)}
     ${ratingKeyHTML()}
+    ${(()=>{
+      if (needsFirstOpponent) return '';
+      const myLinked = state.teamA.linkedProfileCode ? linkedProfileCache[state.teamA.linkedProfileCode] : null;
+      const oppCode = findTrackedOpponentCode(myLinked, state.teamB);
+      if (oppCode){
+        return `<p class="note" style="color:var(--good);margin-top:10px;">✓ You have a matchup matrix specifically for ${esc(state.teamB.name)} — it'll be used in place of the generic one above during pairing.</p>`;
+      }
+      if (myLinked && myLinked.trackedOpponents && myLinked.trackedOpponents.length){
+        return `<p class="note" style="margin-top:10px;">No team-specific matrix found for "${esc(state.teamB.name)}" — the generic disposition matrix above will be used during pairing. Team names must match exactly to link up.</p>`;
+      }
+      return '';
+    })()}
   </div>
   <div class="panel">
     <div class="panel-title"><h3>Tables &amp; missions</h3></div>
@@ -1125,7 +1430,7 @@ function setupHTML(){
     <p class="note">WTC mode: a 0-5 VP gap is a 10-10 draw; every extra 5 VP shifts the split by 1 point each way, capping at 20-0 for a 51+ gap (matches the standard team-event differential chart). Switch to Simple if your group just counts wins.</p>
   </div>
   <div class="btn-row">
-    <button class="btn btn-primary" data-action="finish-setup">Start Round 1 →</button>
+    <button class="btn btn-primary" data-action="finish-setup" ${needsFirstOpponent?'disabled':''}>Start Round 1 →</button>
   </div>`;
 }
 
@@ -1149,13 +1454,54 @@ function draftHTML(round){
   ${ourMatrixPreviewHTML(round)}
   ${tableGridHTML(round)}`;
 }
+function ourOpponentSpecificPreviewHTML(myLinked, oppCode, oppTeamName, remainingPlayers, highlightPlayer){
+  const oppProfile = linkedProfileCache[oppCode];
+  const oppPlayers = (oppProfile && oppProfile.players) ? oppProfile.players : [];
+  const oppFactions = (oppProfile && oppProfile.factions) ? oppProfile.factions : [];
+  const oppBcpLinks = (oppProfile && oppProfile.bcpLinks) ? oppProfile.bcpLinks : [];
+  const headerCells = remainingPlayers.map(p=>{
+    const isHighlighted = highlightPlayer && p === highlightPlayer;
+    return `<th class="${isHighlighted ? 'col-highlight' : ''}">${esc(p)}</th>`;
+  }).join('');
+  const roster = oppPlayers.length ? oppPlayers : [null];
+  const rows = roster.map((op, opIdx)=>{
+    if (op === null){
+      return `<tr><td class="matrix-name dim">no roster loaded for ${esc(oppTeamName)}</td>${remainingPlayers.map(()=>`<td><span class="dim">—</span></td>`).join('')}</tr>`;
+    }
+    const oppLabel = `<td class="matrix-name">${esc(op)}${plainFactionTag(oppFactions[opIdx])}${plainListLink(oppBcpLinks[opIdx])}</td>`;
+    const cells = remainingPlayers.map(p=>{
+      const myIdx = myLinked.players ? myLinked.players.indexOf(p) : -1;
+      const ratings = (myIdx>=0 && myLinked.teamMatchupRatings && myLinked.teamMatchupRatings[myIdx]) || {};
+      const val = ratings[`${oppCode}::${op}`];
+      const isHighlighted = highlightPlayer && p === highlightPlayer;
+      return `<td class="${isHighlighted ? 'col-highlight' : ''}">${val!=null ? `<span class="rating-cell r${val}">${val}</span>` : '<span class="dim">—</span>'}</td>`;
+    }).join('');
+    return `<tr>${oppLabel}${cells}</tr>`;
+  }).join('');
+  return `<div class="matrix-scroll"><table class="matchup-matrix">
+    <thead><tr><th></th>${headerCells}</tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
 function ourMatrixPreviewHTML(round){
   const remaining = round.poolA;
   const total = state.teamA.players.length;
   const pendingDefender = round.chunk.phase === 'nominateDefenders' ? round.chunk.nomA.defender : null;
+  const myLinked = state.teamA.linkedProfileCode ? linkedProfileCache[state.teamA.linkedProfileCode] : null;
+  const oppCode = findTrackedOpponentCode(myLinked, state.teamB);
+  let titleSuffix = '';
+  let body;
+  if (!remaining.length){
+    body = '<p class="note" style="margin-top:0;">All your players are paired for this round.</p>';
+  } else if (oppCode){
+    titleSuffix = ` vs ${esc(state.teamB.name)}`;
+    body = ourOpponentSpecificPreviewHTML(myLinked, oppCode, state.teamB.name, remaining, pendingDefender);
+  } else {
+    body = matchupMatrixReadOnlyHTML('a', state.teamA, remaining, pendingDefender);
+  }
   return `<div class="panel">
-    <div class="panel-title"><h3>📊 ${esc(state.teamA.name)}'s matchup matrix</h3><span class="dim mono" style="font-size:11px;">${remaining.length} OF ${total} REMAINING</span></div>
-    ${remaining.length ? matchupMatrixReadOnlyHTML('a', state.teamA, remaining, pendingDefender) : '<p class="note" style="margin-top:0;">All your players are paired for this round.</p>'}
+    <div class="panel-title"><h3>📊 ${esc(state.teamA.name)}'s matchup matrix${titleSuffix}</h3><span class="dim mono" style="font-size:11px;">${remaining.length} OF ${total} REMAINING</span></div>
+    ${body}
     ${ratingKeyHTML()}
   </div>`;
 }
@@ -1291,7 +1637,7 @@ function acceptRefuseHTML(round){
 function atkCardHTML(player, chosen, field, side, defSide, defName){
   const isChosen = chosen === player;
   const otherChosen = chosen && !isChosen;
-  const rating = getMatchupRating(defSide, defName, getDisposition(side, player));
+  const rating = getEffectiveMatchupRating(defSide, defName, side, player);
   const ratingClass = rating!=null ? 'r'+rating : '';
   const ratingLine = rating!=null ? `<br>${ratingBadgeHTML(rating)}` : '';
   if (isChosen){
@@ -1601,6 +1947,18 @@ function scoringHTML(round){
 }
 
 /* ---------------- round complete / standings ---------------- */
+function nextRoundOpponentPickerHTML(round){
+  return `<div class="panel">
+    <div class="panel-title"><h3>Start round ${round.number+1}</h3></div>
+    <p class="note" style="margin-top:0;">Pick this round's opponent:</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <select id="next-round-opponent-select">
+        ${state.opponentTeams.map((o,i)=>`<option value="${i}">${esc(o.name)}</option>`).join('')}
+      </select>
+      <button class="btn btn-primary" data-action="next-round-with-opponent">Start round ${round.number+1} →</button>
+    </div>
+  </div>`;
+}
 function completeHTML(round){
   const t = roundTotals(round);
   const standings = eventStandings();
@@ -1624,9 +1982,10 @@ function completeHTML(round){
     ${rows}
     <div class="btn-row">
       <button class="btn btn-ghost" data-action="edit-scores">Edit scores</button>
-      ${isLastShown ? `<button class="btn btn-primary" data-action="next-round">Start round ${round.number+1} →</button>` : ''}
+      ${isLastShown && !state.opponentTeams.length ? `<button class="btn btn-primary" data-action="next-round">Start round ${round.number+1} →</button>` : ''}
     </div>
   </div>
+  ${isLastShown && state.opponentTeams.length ? nextRoundOpponentPickerHTML(round) : ''}
   <div class="panel">
     <div class="panel-title"><h3>Event standings</h3><span class="dim mono" style="font-size:11px;">${standings.playedRounds} ROUND${standings.playedRounds===1?'':'S'} PLAYED</span></div>
     <div class="score-banner">
@@ -1729,6 +2088,47 @@ app.addEventListener('click', async (e)=>{
     route();
     return;
   }
+  if (action === 'confirm-bcp-import'){
+    if (!bcpImportPreview || !bcpImportPreview.teams) return;
+    const mine = bcpImportPreview.teams.find(t=>t.isMine);
+    if (!mine){ alert('Pick which team is yours first.'); return; }
+    const nameInput = document.getElementById('bcp-import-event-name');
+    const eventName = (nameInput ? nameInput.value : (bcpImportPreview.eventName||'')).trim();
+
+    const code = randomCode();
+    const ev = newEvent(code);
+    ev.name = eventName;
+    ev.teamA.name = mine.name;
+    mine.players.slice(0,8).forEach((p,i)=>{
+      ev.teamA.players[i] = p.name || ev.teamA.players[i];
+      ev.teamA.factions[i] = p.faction || '';
+      if (p.disposition) ev.teamA.dispositions[i] = p.disposition;
+      ev.teamA.bcpLinks[i] = p.listLink || '';
+    });
+    ev.opponentTeams = bcpImportPreview.teams.filter(t=>t.selected && !t.isMine).map(t=>{
+      const players = t.players.slice(0,8).map(p=>p.name);
+      const factions = t.players.slice(0,8).map(p=>p.faction||'');
+      const dispositions = t.players.slice(0,8).map(p=>p.disposition||'');
+      const bcpLinks = t.players.slice(0,8).map(p=>p.listLink||'');
+      while (players.length < 8){ players.push(`Player ${players.length+1}`); factions.push(''); dispositions.push(''); bcpLinks.push(''); }
+      return { name: t.name, players, factions, dispositions, bcpLinks };
+    });
+
+    state = ev;
+    currentCode = code;
+    mode = 'event';
+    await saveState();
+    await persistLastCode();
+    await refreshIndex();
+    bcpImportPreview = null;
+    route();
+    return;
+  }
+  if (action === 'cancel-bcp-import'){
+    bcpImportPreview = null;
+    route();
+    return;
+  }
   if (action === 'create-team-profile'){
     const code = randomCode();
     teamProfile = newTeamProfile(code);
@@ -1736,6 +2136,7 @@ app.addEventListener('click', async (e)=>{
     mode = 'team';
     await saveTeamProfile();
     await persistLastTeamCode();
+    await refreshIndex();
     route();
     return;
   }
@@ -1752,7 +2153,7 @@ app.addEventListener('click', async (e)=>{
   }
   if (action === 'pick-team'){
     const found = await tryLoadTeamProfile(el.dataset.code);
-    if (found){ mode = 'team'; await persistLastTeamCode(); }
+    if (found){ mode = 'team'; await persistLastTeamCode(); await refreshIndex(); await refreshTrackedOpponentProfiles(); }
     route();
     return;
   }
@@ -1777,6 +2178,31 @@ app.addEventListener('click', async (e)=>{
     try { await storage.delete(STORAGE_PREFIX+code, true); } catch(err){ /* non-fatal */ }
     await removeIndexEntry('events', code);
     if (currentCode === code){ state = null; currentCode = null; }
+    route();
+    return;
+  }
+  if (action === 'toggle-bulk-mode'){
+    const list = el.dataset.list;
+    bulkMode[list] = !bulkMode[list];
+    bulkSelected[list].clear();
+    route();
+    return;
+  }
+  if (action === 'bulk-delete'){
+    const list = el.dataset.list;
+    const codes = Array.from(bulkSelected[list]);
+    if (!codes.length) return;
+    const noun = list === 'teams' ? 'team profile' : 'event';
+    if (!window.confirm(`Delete ${codes.length} ${noun}${codes.length!==1?'s':''}? This can't be undone.`)) return;
+    const prefix = list === 'teams' ? TEAM_PREFIX : STORAGE_PREFIX;
+    for (const code of codes){
+      try { await storage.delete(prefix+code, true); } catch(err){ /* non-fatal, keep going */ }
+      await removeIndexEntry(list, code);
+      if (list === 'teams' && teamProfileCode === code){ teamProfile = null; teamProfileCode = null; }
+      if (list === 'events' && currentCode === code){ state = null; currentCode = null; }
+    }
+    bulkSelected[list].clear();
+    bulkMode[list] = false;
     route();
     return;
   }
@@ -1812,6 +2238,8 @@ app.addEventListener('click', async (e)=>{
     if (!found){ if (errEl) errEl.textContent = `No team profile found for code ${code.toUpperCase()}.`; return; }
     mode = 'team';
     await persistLastTeamCode();
+    await refreshIndex();
+    await refreshTrackedOpponentProfiles();
     route();
     return;
   }
@@ -1822,6 +2250,8 @@ app.addEventListener('click', async (e)=>{
         if (res && res.value){ teamProfile = JSON.parse(res.value); migrateTeamProfile(); }
       }catch(err){ /* ignore */ }
     }
+    await refreshIndex();
+    await refreshTrackedOpponentProfiles();
     route();
     return;
   }
@@ -1837,6 +2267,33 @@ app.addEventListener('click', async (e)=>{
       } catch(err){ /* fall through to landing */ }
     }
     await refreshIndex();
+    await refreshTrackedOpponentProfiles();
+    route();
+    return;
+  }
+  if (action === 'add-tracked-opponent'){
+    if (!teamProfile) return;
+    const select = document.getElementById('add-opponent-select');
+    const code = select ? select.value : null;
+    if (!code) return;
+    if (!teamProfile.trackedOpponents) teamProfile.trackedOpponents = [];
+    if (!teamProfile.trackedOpponents.includes(code)) teamProfile.trackedOpponents.push(code);
+    scheduleSaveProfile();
+    await refreshTrackedOpponentProfiles();
+    route();
+    return;
+  }
+  if (action === 'remove-tracked-opponent'){
+    if (!teamProfile) return;
+    const code = el.dataset.opponent;
+    teamProfile.trackedOpponents = (teamProfile.trackedOpponents||[]).filter(c=>c!==code);
+    if (teamProfile.teamMatchupRatings){
+      teamProfile.teamMatchupRatings.forEach(r=>{
+        if (!r) return;
+        Object.keys(r).forEach(k=>{ if (k.startsWith(code+'::')) delete r[k]; });
+      });
+    }
+    scheduleSaveProfile();
     route();
     return;
   }
@@ -1911,6 +2368,30 @@ app.addEventListener('click', async (e)=>{
     const round1 = state.rounds[0];
     round1.poolA = [...state.teamA.players];
     round1.poolB = [...state.teamB.players];
+    round1.oppName = state.teamB.name;
+    scheduleSave();
+    route();
+    return;
+  }
+  if (action === 'pick-first-opponent'){
+    const select = document.getElementById('first-opponent-select');
+    const idx = select ? parseInt(select.value) : -1;
+    const opp = state.opponentTeams[idx];
+    if (!opp) return;
+    state.teamB = {
+      name: opp.name,
+      players: [...opp.players],
+      dispositions: [...(opp.dispositions || defaultDispositions())],
+      factions: [...(opp.factions || Array(8).fill(''))],
+      bcpLinks: [...(opp.bcpLinks || Array(8).fill(''))],
+      matchupRatings: blankMatchupRatings()
+    };
+    scheduleSave();
+    route();
+    return;
+  }
+  if (action === 'undo-first-opponent'){
+    state.teamB = { name:'Team Beta', players: blankPlayers('Player'), dispositions: defaultDispositions(), factions: Array(8).fill(''), matchupRatings: blankMatchupRatings(), bcpLinks: Array(8).fill('') };
     scheduleSave();
     route();
     return;
@@ -2052,15 +2533,76 @@ app.addEventListener('click', async (e)=>{
   }
   if (action === 'next-round'){
     const num = state.rounds.length + 1;
-    state.rounds.push(newRound(num, state.teamA.players, state.teamB.players));
+    state.rounds.push(newRound(num, state.teamA.players, state.teamB.players, state.teamB.name));
+    state.currentRound = state.rounds.length - 1;
+    scheduleSave(); route();
+    return;
+  }
+  if (action === 'next-round-with-opponent'){
+    const select = document.getElementById('next-round-opponent-select');
+    const idx = select ? parseInt(select.value) : -1;
+    const opp = state.opponentTeams[idx];
+    if (!opp) return;
+    state.teamB = {
+      name: opp.name,
+      players: [...opp.players],
+      dispositions: [...(opp.dispositions || defaultDispositions())],
+      factions: [...(opp.factions || Array(8).fill(''))],
+      bcpLinks: [...(opp.bcpLinks || Array(8).fill(''))],
+      matchupRatings: blankMatchupRatings()
+    };
+    const num = state.rounds.length + 1;
+    state.rounds.push(newRound(num, state.teamA.players, state.teamB.players, opp.name));
     state.currentRound = state.rounds.length - 1;
     scheduleSave(); route();
     return;
   }
 });
 
-app.addEventListener('change', (e)=>{
+app.addEventListener('change', async (e)=>{
   const el = e.target;
+  if (el.dataset.action === 'toggle-bulk-select'){
+    const list = el.dataset.list, code = el.dataset.code;
+    if (el.checked) bulkSelected[list].add(code); else bulkSelected[list].delete(code);
+    route();
+    return;
+  }
+  if (el.dataset.action === 'bcp-file-selected'){
+    const file = el.files && el.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = parseBcpRosterHtml(text);
+      if (parsed.error){
+        bcpImportPreview = { error: parsed.error, teams: [], eventName: parsed.eventName || '' };
+      } else {
+        bcpImportPreview = {
+          error: null,
+          eventName: parsed.eventName || '',
+          teams: parsed.teams.map((t,i) => ({ ...t, selected: true, isMine: i===0 }))
+        };
+      }
+    } catch(err){
+      bcpImportPreview = { error: 'Could not read that file — try again.', teams: [], eventName: '' };
+    }
+    bcpImportSummary = null;
+    route();
+    return;
+  }
+  if (el.dataset.action === 'toggle-bcp-team'){
+    const idx = parseInt(el.dataset.idx);
+    if (bcpImportPreview && bcpImportPreview.teams && bcpImportPreview.teams[idx]){
+      bcpImportPreview.teams[idx].selected = el.checked;
+    }
+    return;
+  }
+  if (el.dataset.action === 'set-bcp-mine'){
+    const idx = parseInt(el.dataset.idx);
+    if (bcpImportPreview && bcpImportPreview.teams){
+      bcpImportPreview.teams.forEach((t,i)=>{ t.isMine = (i===idx); });
+    }
+    return;
+  }
   if (el.dataset.action === 'set-scoring'){
     state.scoringMode = el.value;
     scheduleSave();
@@ -2080,6 +2622,16 @@ app.addEventListener('change', (e)=>{
     if (!team.matchupRatings[idx]) team.matchupRatings[idx] = {};
     team.matchupRatings[idx][disp] = el.value ? parseInt(el.value) : null;
     if (side==='p') scheduleSaveProfile(); else scheduleSave();
+    route();
+    return;
+  }
+  if (el.dataset.action === 'set-team-matchup'){
+    if (!teamProfile) return;
+    const idx = parseInt(el.dataset.idx), opponentCode = el.dataset.opponent;
+    if (!teamProfile.teamMatchupRatings) teamProfile.teamMatchupRatings = blankMatchupRatings();
+    if (!teamProfile.teamMatchupRatings[idx]) teamProfile.teamMatchupRatings[idx] = {};
+    teamProfile.teamMatchupRatings[idx][opponentCode] = el.value ? parseInt(el.value) : null;
+    scheduleSaveProfile();
     route();
     return;
   }
