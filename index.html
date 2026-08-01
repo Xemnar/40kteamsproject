@@ -164,6 +164,7 @@ label{display:block;}
 .matchup-matrix .matrix-name{text-align:left;font-size:12px;white-space:nowrap;color:var(--text);}
 .matchup-matrix th.col-highlight,.matchup-matrix td.col-highlight{background:var(--gold-soft);}
 .matchup-matrix th.col-highlight{color:var(--gold);font-weight:700;border-top:3px solid var(--gold);}
+.matchup-matrix td.cell-highlight{box-shadow:inset 0 0 0 3px var(--gold);}
 .matchup-matrix select{width:52px;padding:4px 2px;font-size:12px;background:var(--panel-alt);border:1px solid var(--line);color:var(--text);border-radius:3px;font-weight:600;}
 .matchup-matrix select.r1{background:var(--r1);border-color:var(--r1);color:#fff;}
 .matchup-matrix select.r2{background:var(--r2);border-color:var(--r2);color:#fff;}
@@ -370,98 +371,24 @@ button.atk-card:hover .tap-hint{color:var(--gold);}
 </head>
 <body>
 <div id="app">Loading…</div>
-<!-- Firebase (Realtime Database) — used for persistence when this file runs outside Claude.ai -->
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
 <script>
 /* =========================================================
-   8-MAN MATCHUP CONSOLE — standalone / self-hosted build
+   8-MAN MATCHUP CONSOLE
    Accept/Refuse team pairing draft for 8-a-side 40k events
    ========================================================= */
 
-/* =========================================================
-   FIREBASE — already configured for the k-teams-project Firebase
-   project. If you ever need to point this at a different Firebase
-   project, replace the object below with that project's config
-   (Firebase console → Project settings → Your apps → the </> icon).
-
-   Security rules note: anyone who has your databaseURL can read/
-   write it — same trust model as the event/team codes (the code
-   is the only gate), now paired with the app's password screen.
-   Your Realtime Database is currently in "test mode," which stops
-   accepting writes after 30 days unless you update the rules.
-   When you get to it, in Realtime Database → Rules, use:
-     { "rules": { ".read": true, ".write": true } }
-   to remove that expiry — no rush, it works fine as-is until then.
-   ========================================================= */
-const firebaseConfig = {
-  apiKey: "AIzaSyDvHxbiPr8tZEar0FJfqKt0_A41rxrguz4",
-  authDomain: "k-teams-project.firebaseapp.com",
-  databaseURL: "https://k-teams-project-default-rtdb.firebaseio.com",
-  projectId: "k-teams-project",
-  storageBucket: "k-teams-project.firebasestorage.app",
-  messagingSenderId: "1058043714195",
-  appId: "1:1058043714195:web:0bf8b9e6937fc213af4b66",
-  measurementId: "G-WX4F3JNWFT"
-};
-
-let firebaseReady = false;
-let fbDb = null;
-try {
-  if (firebaseConfig.apiKey && firebaseConfig.apiKey !== 'YOUR_API_KEY' && typeof firebase !== 'undefined'){
-    firebase.initializeApp(firebaseConfig);
-    fbDb = firebase.database();
-    firebaseReady = true;
-  }
-} catch(e){ console.error('Firebase init failed:', e); firebaseReady = false; }
-
-function sanitizeKey(key){
-  // Realtime Database paths can't contain . $ # [ ] or /
-  return String(key).replace(/[.$#\[\]/]/g, '_');
-}
-
-// Drop-in replacement for the window.storage API this app was originally built
-// against: shared:true goes to Firebase (visible to your whole team), shared:false
-// stays in this browser's own localStorage (per-device, e.g. "last code I used").
-const storage = {
-  async get(key, shared){
-    if (shared === false){
-      const raw = localStorage.getItem(key);
-      return raw != null ? { key, value: raw, shared } : null;
-    }
-    if (!firebaseReady) throw new Error('Firebase is not configured yet — see firebaseConfig at the top of the script');
-    const snap = await fbDb.ref(sanitizeKey(key)).once('value');
-    return snap.exists() ? { key, value: snap.val(), shared } : null;
-  },
-  async set(key, value, shared){
-    if (shared === false){
-      localStorage.setItem(key, value);
-      return { key, value, shared };
-    }
-    if (!firebaseReady) throw new Error('Firebase is not configured yet — see firebaseConfig at the top of the script');
-    await fbDb.ref(sanitizeKey(key)).set(value);
-    return { key, value, shared };
-  },
-  async delete(key, shared){
-    if (shared === false){
-      localStorage.removeItem(key);
-      return { key, deleted: true, shared };
-    }
-    if (!firebaseReady) throw new Error('Firebase is not configured yet — see firebaseConfig at the top of the script');
-    await fbDb.ref(sanitizeKey(key)).remove();
-    return { key, deleted: true, shared };
-  }
-};
-
-const STORAGE_PREFIX = 'wtc8-event-';
-const LAST_CODE_KEY = 'wtc8-last-code';
-const TEAM_PREFIX = 'wtc8-team-';
-const LAST_TEAM_CODE_KEY = 'wtc8-last-team-code';
-const INDEX_KEY = 'wtc8-index';
-// Simple client-side gate, not real security — the password lives in this
-// file's source, so anyone who views source can read it. It's meant to keep
-// the app off casual/accidental visitors' radar, not to stop a determined one.
-const APP_PASSWORD = 'teamchimera';
+let STORAGE_PREFIX = 'wtc8-event-';
+let LAST_CODE_KEY = 'wtc8-last-code';
+let TEAM_PREFIX = 'wtc8-team-';
+let LAST_TEAM_CODE_KEY = 'wtc8-last-team-code';
+let INDEX_KEY = 'wtc8-index';
+// The registry of registered teams is NOT namespaced — it's the shared, public
+// list every team's login dropdown reads from. It holds team name + slug +
+// a SHA-256 hash of their password (never the password itself).
+const AUTH_REGISTRY_KEY = 'wtc8-auth-registry';
+// Client-side gate, not real security — the Firebase database backing this
+// app is fully open to anyone with its URL, password or not. This keeps
+// teams from casually seeing each other's data, not from a determined visitor.
 
 let state = null;
 let currentCode = null;
@@ -478,6 +405,17 @@ let bcpImportSummary = null;
 let bulkMode = { teams: false, events: false };
 let bulkSelected = { teams: new Set(), events: new Set() };
 let eventView = null; // null = normal draft/scoring flow, 'matchups' = the matrices/opponent-teams browser
+let undoStack = []; // deep copies of state, oldest first — small history for stepping back multiple actions
+const UNDO_STACK_LIMIT = 8;
+const UNDO_CHECKPOINT_ACTIONS = new Set([
+  'pick-first-opponent',
+  'confirm-defenders', 'confirm-attackers', 'confirm-accept-refuse',
+  'confirm-tables', 'confirm-final-tables', 'submit-scores',
+  'next-round', 'next-round-with-opponent'
+]);
+let authView = 'login'; // 'login' | 'register'
+let authRegistryCache = { teams: [] };
+let activeTeamSlug = null;
 
 const app = document.getElementById('app');
 
@@ -499,23 +437,54 @@ function setSync(status){
   if (lbl) lbl.textContent = status==='busy' ? 'saving…' : status==='err' ? 'save failed' : 'synced';
 }
 
-/* ---------------- auth ---------------- */
-function checkAuth(){
-  try { return localStorage.getItem('wtc8-authed') === 'true'; } catch(e){ return false; }
+/* ---------------- auth: per-team registration & namespaced storage ---------------- */
+async function hashPassword(pw){
+  const enc = new TextEncoder().encode(pw);
+  const digest = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
 }
-function setAuthed(){
-  try { localStorage.setItem('wtc8-authed', 'true'); } catch(e){ /* non-fatal */ }
+function slugifyTeamName(name){
+  return (name||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40) || 'team';
+}
+function applyNamespace(slug){
+  activeTeamSlug = slug;
+  STORAGE_PREFIX = `${slug}-wtc8-event-`;
+  LAST_CODE_KEY = `${slug}-wtc8-last-code`;
+  TEAM_PREFIX = `${slug}-wtc8-team-`;
+  LAST_TEAM_CODE_KEY = `${slug}-wtc8-last-team-code`;
+  INDEX_KEY = `${slug}-wtc8-index`;
+}
+async function loadAuthRegistry(){
+  try {
+    const res = await window.storage.get(AUTH_REGISTRY_KEY, true);
+    authRegistryCache = (res && res.value) ? JSON.parse(res.value) : { teams: [] };
+  } catch(e){ authRegistryCache = { teams: [] }; }
+  return authRegistryCache;
+}
+async function saveAuthRegistry(reg){
+  await window.storage.set(AUTH_REGISTRY_KEY, JSON.stringify(reg), true);
+}
+function checkAuth(){
+  try {
+    const slug = localStorage.getItem('wtc8-active-team');
+    if (slug){ applyNamespace(slug); return true; }
+  } catch(e){ /* fall through */ }
+  return false;
+}
+function setAuthed(slug){
+  try { localStorage.setItem('wtc8-active-team', slug); } catch(e){ /* non-fatal */ }
+  applyNamespace(slug);
   authenticated = true;
 }
 function clearAuthed(){
-  try { localStorage.removeItem('wtc8-authed'); } catch(e){ /* non-fatal */ }
+  try { localStorage.removeItem('wtc8-active-team'); } catch(e){ /* non-fatal */ }
   authenticated = false;
 }
 
 /* ---------------- shared index (list of all teams & events) ---------------- */
 async function loadIndex(){
   try {
-    const res = await storage.get(INDEX_KEY, true);
+    const res = await window.storage.get(INDEX_KEY, true);
     if (res && res.value) return JSON.parse(res.value);
   } catch(e){ /* none yet */ }
   return { teams: [], events: [] };
@@ -529,7 +498,7 @@ async function upsertIndexEntry(kind, entry){
     if (!idx[kind]) idx[kind] = [];
     const i = idx[kind].findIndex(x=>x.code===entry.code);
     if (i>=0) idx[kind][i] = entry; else idx[kind].push(entry);
-    await storage.set(INDEX_KEY, JSON.stringify(idx), true);
+    await window.storage.set(INDEX_KEY, JSON.stringify(idx), true);
     indexCache = idx;
   } catch(e){ /* non-fatal */ }
 }
@@ -537,14 +506,14 @@ async function removeIndexEntry(kind, code){
   try {
     const idx = await loadIndex();
     idx[kind] = (idx[kind]||[]).filter(x=>x.code!==code);
-    await storage.set(INDEX_KEY, JSON.stringify(idx), true);
+    await window.storage.set(INDEX_KEY, JSON.stringify(idx), true);
     indexCache = idx;
   } catch(e){ /* non-fatal */ }
 }
 
 /* ---------------- storage ---------------- */
 async function persistLastCode(){
-  try { await storage.set(LAST_CODE_KEY, JSON.stringify({code: currentCode}), false); }
+  try { await window.storage.set(LAST_CODE_KEY, JSON.stringify({code: currentCode}), false); }
   catch(e){ /* non-fatal */ }
 }
 function scheduleSave(){
@@ -555,7 +524,7 @@ function scheduleSave(){
 async function saveState(){
   if (!state || !currentCode) return;
   try {
-    await storage.set(STORAGE_PREFIX+currentCode, JSON.stringify(state), true);
+    await window.storage.set(STORAGE_PREFIX+currentCode, JSON.stringify(state), true);
     setSync('ok');
     await upsertIndexEntry('events', { code: currentCode, name: state.name, teamA: state.teamA.name, teamB: state.teamB.name });
   } catch(e){ setSync('err'); }
@@ -563,7 +532,7 @@ async function saveState(){
 async function tryLoad(code){
   currentCode = code.trim().toUpperCase();
   try {
-    const res = await storage.get(STORAGE_PREFIX+currentCode, true);
+    const res = await window.storage.get(STORAGE_PREFIX+currentCode, true);
     if (res && res.value){
       state = JSON.parse(res.value); migrateState();
       await upsertIndexEntry('events', { code: currentCode, name: state.name, teamA: state.teamA.name, teamB: state.teamB.name });
@@ -576,7 +545,7 @@ async function tryLoad(code){
 
 /* ---------------- team profile storage ---------------- */
 async function persistLastTeamCode(){
-  try { await storage.set(LAST_TEAM_CODE_KEY, JSON.stringify({code: teamProfileCode}), false); }
+  try { await window.storage.set(LAST_TEAM_CODE_KEY, JSON.stringify({code: teamProfileCode}), false); }
   catch(e){ /* non-fatal */ }
 }
 function scheduleSaveProfile(){
@@ -587,7 +556,7 @@ function scheduleSaveProfile(){
 async function saveTeamProfile(){
   if (!teamProfile || !teamProfileCode) return;
   try {
-    await storage.set(TEAM_PREFIX+teamProfileCode, JSON.stringify(teamProfile), true);
+    await window.storage.set(TEAM_PREFIX+teamProfileCode, JSON.stringify(teamProfile), true);
     setSync('ok');
     await upsertIndexEntry('teams', { code: teamProfileCode, name: teamProfile.name });
   } catch(e){ setSync('err'); }
@@ -595,7 +564,7 @@ async function saveTeamProfile(){
 async function tryLoadTeamProfile(code){
   teamProfileCode = code.trim().toUpperCase();
   try {
-    const res = await storage.get(TEAM_PREFIX+teamProfileCode, true);
+    const res = await window.storage.get(TEAM_PREFIX+teamProfileCode, true);
     if (res && res.value){
       teamProfile = JSON.parse(res.value); migrateTeamProfile();
       await upsertIndexEntry('teams', { code: teamProfileCode, name: teamProfile.name });
@@ -631,6 +600,8 @@ function migrateState(){
   if (!state) return;
   if (state.name === undefined) state.name = '';
   if (!state.opponentTeams) state.opponentTeams = [];
+  if (!state.workspace || !state.workspace.notes) state.workspace = { notes: Array(8).fill(''), lists: Array.from({length:8}, ()=>[]) };
+  if (!state.workspace.lists) state.workspace.lists = Array.from({length:8}, ()=>[]);
   if (state.teamA && !state.teamA.teamMatchupRatings) state.teamA.teamMatchupRatings = blankMatchupRatings();
   [state.teamA, state.teamB].forEach(team=>{
     if (team && !team.factions) team.factions = Array(8).fill('');
@@ -745,7 +716,7 @@ async function refreshLinkedProfiles(){
   const codes = [state.teamA && state.teamA.linkedProfileCode, state.teamB && state.teamB.linkedProfileCode].filter(Boolean);
   for (const code of codes){
     try {
-      const res = await storage.get(TEAM_PREFIX+code, true);
+      const res = await window.storage.get(TEAM_PREFIX+code, true);
       if (res && res.value) linkedProfileCache[code] = JSON.parse(res.value);
     } catch(e){ /* keep whatever was cached before, if anything */ }
   }
@@ -754,7 +725,7 @@ async function refreshTrackedOpponentProfiles(){
   if (!teamProfile || !teamProfile.trackedOpponents) return;
   for (const code of teamProfile.trackedOpponents){
     try {
-      const res = await storage.get(TEAM_PREFIX+code, true);
+      const res = await window.storage.get(TEAM_PREFIX+code, true);
       if (res && res.value) linkedProfileCache[code] = JSON.parse(res.value);
     } catch(e){ /* keep whatever was cached before, if anything */ }
   }
@@ -894,6 +865,7 @@ function newEvent(code){
     teamA:{ name:'Team Alpha', players: blankPlayers('Player'), dispositions: defaultDispositions(), factions: Array(8).fill(''), matchupRatings: blankMatchupRatings(), bcpLinks: Array(8).fill(''), teamMatchupRatings: blankMatchupRatings() },
     teamB:{ name:'Team Beta', players: blankPlayers('Player'), dispositions: defaultDispositions(), factions: Array(8).fill(''), matchupRatings: blankMatchupRatings(), bcpLinks: Array(8).fill('') },
     opponentTeams: [], // pool of {name, players, factions, dispositions, bcpLinks} — pick a new one each round
+    workspace: { notes: Array(8).fill(''), lists: Array.from({length:8}, ()=>[]) }, // per-player free-text notes + uploaded list versions, persists for the whole event
     tables: Array.from({length:8}, (_,i)=>({ id:i+1, label:`Table ${i+1}` })),
     scoringMode: 'wtc',
     setupComplete: false,
@@ -927,6 +899,13 @@ function availableTables(round){
   const usedIds = new Set(round.pairings.map(p=>p.tableId));
   round.chunk.confirmed.forEach(c=>{ if (c.tableId) usedIds.add(c.tableId); });
   return state.tables.filter(t=>!usedIds.has(t.id));
+}
+function autoAssignTables(round){
+  const avail = availableTables(round);
+  let next = 0;
+  round.chunk.confirmed.forEach(p=>{
+    if (!p.tableId && avail[next]){ p.tableId = avail[next].id; next++; }
+  });
 }
 
 /* ---------------- scoring ---------------- */
@@ -974,6 +953,7 @@ function route(){
   if (!state){ app.innerHTML = landingHTML(); return; }
   if (!state.setupComplete){ app.innerHTML = header() + setupHTML(); return; }
   if (eventView === 'matchups'){ app.innerHTML = header() + eventMatchupsHTML(); return; }
+  if (eventView === 'workspace'){ app.innerHTML = header() + workspaceHTML(); return; }
   const round = curRound();
   if (round.status === 'drafting') app.innerHTML = header() + draftHTML(round);
   else if (round.status === 'scoring') app.innerHTML = header() + scoringHTML(round);
@@ -1019,19 +999,103 @@ function eventMatchupsHTML(){
     ${state.opponentTeams.length ? state.opponentTeams.map(o=>eventOpponentMatrixBlockHTML(state.teamA, o)).join('') : '<p class="note" style="margin-top:0;">This event has no opponent pool — it was set up with a single fixed opponent for the whole event.</p>'}
   </div>`;
 }
+function playerListsHTML(i){
+  const lists = state.workspace.lists[i] || [];
+  return `<div style="margin-top:10px;">
+    <div class="field-label" style="margin-bottom:4px;">List versions</div>
+    ${lists.length ? lists.map((l,li)=>`
+      <details style="background:var(--panel-alt);border:1px solid var(--line-soft);border-radius:var(--radius);padding:6px 10px;margin-bottom:6px;">
+        <summary style="cursor:pointer;font-size:12px;display:flex;align-items:center;gap:8px;">
+          <span style="flex:1;">${esc(l.name)}</span>
+          <span class="dim mono" style="font-size:10px;">${esc(new Date(l.uploadedAt).toLocaleString())}</span>
+          <button type="button" class="btn-ghost" data-action="delete-list" data-idx="${i}" data-list-idx="${li}" style="padding:1px 6px;font-size:9px;" title="Remove this version">✕</button>
+        </summary>
+        <pre style="white-space:pre-wrap;word-break:break-word;font-size:11px;margin-top:8px;font-family:var(--font-mono);">${esc(l.content)}</pre>
+      </details>
+    `).join('') : '<p class="note" style="margin-top:0;margin-bottom:6px;">No list versions added yet.</p>'}
+    <input type="text" id="list-name-${i}" placeholder="Name this version (optional)" style="width:100%;margin-bottom:6px;background:var(--panel-alt);border:1px solid var(--line);border-radius:var(--radius);color:var(--text);padding:6px 10px;font-family:var(--font-body);font-size:12px;">
+    <textarea id="list-paste-${i}" placeholder="Paste your list here…" style="width:100%;min-height:80px;background:var(--panel-alt);border:1px solid var(--line);border-radius:var(--radius);color:var(--text);padding:8px 10px;font-family:var(--font-mono);font-size:12px;resize:vertical;"></textarea>
+    <div class="btn-row" style="margin-top:6px;">
+      <button type="button" class="btn" data-action="add-list-version" data-idx="${i}">+ Add version</button>
+    </div>
+  </div>`;
+}
+function workspaceHTML(){
+  const round = curRound();
+  return `
+  <div class="panel">
+    <div class="panel-title"><h2>Team workspace</h2><span class="eyebrow">${esc(state.name || state.code)}</span></div>
+    <p class="note" style="margin-top:0;">A shared space for your team — each player can jot down their list, notes, or reminders here, and upload versions of the list they're working on. It sticks around for the whole event, not just one round.</p>
+  </div>
+  <div class="panel">
+    ${state.teamA.players.map((p,i)=>`
+      <div style="margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--line-soft);">
+        <div class="field-label" style="margin-bottom:4px;">${esc(p)}${plainFactionTag(state.teamA.factions[i])}</div>
+        <textarea data-bind="workspace.notes.${i}" placeholder="Notes, reminders…" style="width:100%;min-height:70px;background:var(--panel-alt);border:1px solid var(--line);border-radius:var(--radius);color:var(--text);padding:8px 10px;font-family:var(--font-body);font-size:13px;resize:vertical;">${esc(state.workspace.notes[i]||'')}</textarea>
+        ${playerListsHTML(i)}
+      </div>
+    `).join('')}
+  </div>
+  <div class="btn-row">
+    <button class="btn btn-primary" data-action="toggle-workspace-view">← back to round ${round.number}</button>
+  </div>`;
+}
 function passwordGateHTML(){
+  if (authView === 'register'){
+    return `
+    <div class="hud-header"><div class="hud-brand"><span class="bracket">[</span> 8-MAN MATCHUP CONSOLE <span class="bracket">]</span></div></div>
+    <div class="panel landing-card">
+      <div class="eyebrow">REGISTER YOUR TEAM</div>
+      <h2>Set up your team's space</h2>
+      <p class="dim" style="font-size:13px;">Pick a team name and a password — this creates your own private area, separate from every other team using this tool.</p>
+      <div class="field">
+        <div class="field-label">Team name</div>
+        <input type="text" id="register-team-name" placeholder="e.g. The Talons">
+      </div>
+      <div class="field">
+        <div class="field-label">Password</div>
+        <input type="password" id="register-password" placeholder="At least 4 characters">
+      </div>
+      <div class="field">
+        <div class="field-label">Confirm password</div>
+        <input type="password" id="register-password-confirm" placeholder="Type it again">
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" data-action="register">Register &amp; enter →</button>
+        <button class="btn-ghost" data-action="show-login">← back to log in</button>
+      </div>
+      <div id="register-error" class="error-text"></div>
+    </div>`;
+  }
+  const teams = (authRegistryCache.teams||[]).slice().sort((a,b)=>a.name.localeCompare(b.name));
   return `
   <div class="hud-header"><div class="hud-brand"><span class="bracket">[</span> 8-MAN MATCHUP CONSOLE <span class="bracket">]</span></div></div>
   <div class="panel landing-card">
     <div class="eyebrow">ACCESS</div>
-    <h2>Enter password</h2>
+    <h2>Log in</h2>
+    ${teams.length ? `
     <div class="field">
-      <input type="password" id="app-password" placeholder="Password">
+      <div class="field-label">Your team</div>
+      <select id="login-team-select">
+        <option value="">— choose your team —</option>
+        ${teams.map(t=>`<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field">
+      <div class="field-label">Password</div>
+      <input type="password" id="login-password" placeholder="Password">
     </div>
     <div class="btn-row">
-      <button class="btn btn-primary" data-action="submit-password">Enter</button>
+      <button class="btn btn-primary" data-action="login">Log in</button>
     </div>
-    <div id="password-error" class="error-text"></div>
+    <div id="login-error" class="error-text"></div>
+    <p class="note" style="margin-top:14px;">Don't see your team? <button type="button" class="btn-ghost" data-action="show-register" style="padding:2px 8px;">Register a new team</button></p>
+    ` : `
+    <p class="dim" style="font-size:13px;">No teams have registered yet — be the first.</p>
+    <div class="btn-row">
+      <button class="btn btn-primary" data-action="show-register">Register a new team →</button>
+    </div>
+    `}
   </div>`;
 }
 
@@ -1045,10 +1109,11 @@ function header(){
       ${round ? `<span class="hud-badge mono">ROUND ${round.number}</span>` : ''}
       <span class="hud-badge"><span class="sync-dot" id="sync-dot"></span><span id="sync-label">synced</span></span>
       <button class="btn-ghost" data-action="refresh">⟳ refresh</button>
+      ${undoStack.length ? `<button class="btn-ghost" data-action="undo-last-action" title="Step back one action — ${undoStack.length} step${undoStack.length!==1?'s':''} available">↩ undo${undoStack.length>1?` (${undoStack.length})`:''}</button>` : ''}
       <button class="btn-ghost" data-action="toggle-matchups-view">${eventView==='matchups' ? '← back' : '📊 teams &amp; matrices'}</button>
+      <button class="btn-ghost" data-action="toggle-workspace-view">${eventView==='workspace' ? '← back to round' : '📋 workspace'}</button>
       <button class="btn-ghost" data-action="copy-spectator-link">📺 spectator link</button>
-      <button class="btn-ghost" data-action="go-home">🏠 all teams &amp; events</button>
-      <button class="btn-ghost" data-action="goto-team-profile">team profile</button>
+      <button class="btn-ghost" data-action="go-home">🏠 all events</button>
     </div>
   </div>`;
 }
@@ -1143,16 +1208,7 @@ function bcpImportPanelHTML(){
           </label>`;
         }).join('')}
       </div>
-      <p class="note" style="margin-top:10px;margin-bottom:4px;">Which others should go into the opponent pool?</p>
-      <div class="pool-list">
-        ${bcpImportPreview.teams.map((t,i)=>{
-          if (t.isMine) return '';
-          return `<label class="pool-item" style="cursor:pointer;">
-            <input type="checkbox" data-action="toggle-bcp-team" data-idx="${i}" ${t.selected?'checked':''}>
-            <span>${esc(t.name)} <span class="dim mono" style="font-size:11px;">(${t.players.length} player${t.players.length!==1?'s':''})</span></span>
-          </label>`;
-        }).join('')}
-      </div>
+      <p class="note" style="margin-top:10px;">Every other team on the page (${bcpImportPreview.teams.length-1}) will be added to the opponent pool automatically — you can remove any you don't want from "teams & matrices" once the event's created.</p>
       <div class="btn-row" style="margin-top:10px;">
         <button class="btn btn-primary" data-action="confirm-bcp-import">Create event →</button>
         <button class="btn-ghost" data-action="cancel-bcp-import">Cancel</button>
@@ -1176,12 +1232,6 @@ function landingHTML(){
       <button class="btn-ghost" data-action="logout">🔒 log out</button>
     </div>
   </div>
-  <div class="panel">
-    <div class="panel-title"><h2>Team Profiles</h2><span class="eyebrow">YOUR TEAMS</span></div>
-    <p class="dim" style="font-size:13px;margin-top:0;">Roster, dispositions, factions, and matchup ratings — built once, reused across events.</p>
-    ${teamListHTML()}
-    <div class="btn-row"><button class="btn btn-primary" data-action="create-team-profile">+ New team profile</button></div>
-  </div>
   ${bcpImportPanelHTML()}
   <div class="panel">
     <div class="panel-title"><h2>Events</h2><span class="eyebrow">LIVE PAIRING SESSIONS</span></div>
@@ -1190,25 +1240,12 @@ function landingHTML(){
   </div>
   <div class="panel">
     <div class="panel-title"><h3>Have a code someone shared?</h3></div>
-    <p class="note" style="margin-top:0;">Not showing above yet? Open it directly by code — it'll join the lists above from then on.</p>
-    <div class="two-col">
-      <div>
-        <div class="field-label">Team profile code</div>
-        <div style="display:flex;gap:8px;">
-          <input type="text" id="team-profile-code" maxlength="8" style="text-transform:uppercase;font-family:var(--font-mono);letter-spacing:.1em;">
-          <button class="btn" data-action="open-team-profile">Open</button>
-        </div>
-        <div id="team-profile-error" class="error-text"></div>
-      </div>
-      <div>
-        <div class="field-label">Event code</div>
-        <div style="display:flex;gap:8px;">
-          <input type="text" id="landing-code" maxlength="8" style="text-transform:uppercase;font-family:var(--font-mono);letter-spacing:.1em;">
-          <button class="btn" data-action="join-event">Open</button>
-        </div>
-        <div id="landing-error" class="error-text"></div>
-      </div>
+    <p class="note" style="margin-top:0;">Not showing above yet? Open it directly by code — it'll join the list above from then on.</p>
+    <div style="display:flex;gap:8px;max-width:340px;">
+      <input type="text" id="landing-code" maxlength="8" style="text-transform:uppercase;font-family:var(--font-mono);letter-spacing:.1em;">
+      <button class="btn" data-action="join-event">Open</button>
     </div>
+    <div id="landing-error" class="error-text"></div>
   </div>`;
 }
 
@@ -1417,7 +1454,6 @@ function setupHTML(){
   const bLinked = !!state.teamB.linkedProfileCode;
   const needsFirstOpponent = state.opponentTeams.length > 0 && state.teamB.name === 'Team Beta';
   return `
-  ${importProfileHTML()}
   <div class="panel">
     <div class="panel-title"><h2>Event setup</h2><span class="eyebrow">STEP 1 OF 1</span></div>
     <div class="two-col">
@@ -1512,27 +1548,35 @@ function draftHTML(round){
   ${ourMatrixPreviewHTML(round)}
   ${tableGridHTML(round)}`;
 }
-function ourOpponentSpecificPreviewHTML(myLinked, oppCode, oppTeamName, remainingPlayers, highlightPlayer){
+function ourOpponentSpecificPreviewHTML(myLinked, oppCode, oppTeamName, remainingPlayers, highlight, remainingOppPlayers){
   const oppProfile = linkedProfileCache[oppCode];
   const oppPlayers = (oppProfile && oppProfile.players) ? oppProfile.players : [];
   const oppFactions = (oppProfile && oppProfile.factions) ? oppProfile.factions : [];
   const oppBcpLinks = (oppProfile && oppProfile.bcpLinks) ? oppProfile.bcpLinks : [];
+  const highlightCol = highlight && highlight.col;
+  const highlightCell = highlight && highlight.cell;
   const headerCells = remainingPlayers.map(p=>{
-    const isHighlighted = highlightPlayer && p === highlightPlayer;
-    return `<th class="${isHighlighted ? 'col-highlight' : ''}">${esc(p)}</th>`;
+    const myIdx = myLinked.players ? myLinked.players.indexOf(p) : -1;
+    const faction = myIdx>=0 && myLinked.factions ? myLinked.factions[myIdx] : '';
+    const isHighlighted = highlightCol && p === highlightCol;
+    return `<th class="${isHighlighted ? 'col-highlight' : ''}">${esc(p)}${plainFactionTag(faction)}</th>`;
   }).join('');
-  const roster = oppPlayers.length ? oppPlayers : [null];
-  const rows = roster.map((op, opIdx)=>{
-    if (op === null){
-      return `<tr><td class="matrix-name dim">no roster loaded for ${esc(oppTeamName)}</td>${remainingPlayers.map(()=>`<td><span class="dim">—</span></td>`).join('')}</tr>`;
+  const oppIdxs = oppPlayers.map((p,i)=>i).filter(i=> !remainingOppPlayers || remainingOppPlayers.includes(oppPlayers[i]));
+  const roster = oppIdxs.length ? oppIdxs : [null];
+  const rows = roster.map((opIdx)=>{
+    if (opIdx === null){
+      return `<tr><td class="matrix-name dim">${oppPlayers.length ? 'all opponent players paired for this round' : `no roster loaded for ${esc(oppTeamName)}`}</td>${remainingPlayers.map(()=>`<td><span class="dim">—</span></td>`).join('')}</tr>`;
     }
+    const op = oppPlayers[opIdx];
     const oppLabel = `<td class="matrix-name">${esc(op)}${plainFactionTag(oppFactions[opIdx])}${plainListLink(oppBcpLinks[opIdx])}</td>`;
     const cells = remainingPlayers.map(p=>{
       const myIdx = myLinked.players ? myLinked.players.indexOf(p) : -1;
       const ratings = (myIdx>=0 && myLinked.teamMatchupRatings && myLinked.teamMatchupRatings[myIdx]) || {};
       const val = ratings[`${oppCode}::${op}`];
-      const isHighlighted = highlightPlayer && p === highlightPlayer;
-      return `<td class="${isHighlighted ? 'col-highlight' : ''}">${val!=null ? `<span class="rating-cell r${val}">${val}</span>` : '<span class="dim">—</span>'}</td>`;
+      const isColHighlighted = highlightCol && p === highlightCol;
+      const isCellHighlighted = highlightCell && op === highlightCell.row && highlightCell.cols.includes(p);
+      const cls = isCellHighlighted ? 'cell-highlight' : (isColHighlighted ? 'col-highlight' : '');
+      return `<td class="${cls}">${val!=null ? `<span class="rating-cell r${val}">${val}</span>` : '<span class="dim">—</span>'}</td>`;
     }).join('');
     return `<tr>${oppLabel}${cells}</tr>`;
   }).join('');
@@ -1541,19 +1585,30 @@ function ourOpponentSpecificPreviewHTML(myLinked, oppCode, oppTeamName, remainin
     <tbody>${rows}</tbody>
   </table></div>`;
 }
-function eventOpponentPreviewHTML(myTeam, poolOpp, remainingPlayers, highlightPlayer){
+function eventOpponentPreviewHTML(myTeam, poolOpp, remainingPlayers, highlight, remainingOppPlayers){
+  const highlightCol = highlight && highlight.col;
+  const highlightCell = highlight && highlight.cell;
   const headerCells = remainingPlayers.map(p=>{
-    const isHighlighted = highlightPlayer && p === highlightPlayer;
-    return `<th class="${isHighlighted ? 'col-highlight' : ''}">${esc(p)}</th>`;
+    const myIdx = myTeam.players.indexOf(p);
+    const faction = myIdx>=0 ? myTeam.factions[myIdx] : '';
+    const isHighlighted = highlightCol && p === highlightCol;
+    return `<th class="${isHighlighted ? 'col-highlight' : ''}">${esc(p)}${plainFactionTag(faction)}</th>`;
   }).join('');
-  const rows = poolOpp.players.map((op, opIdx)=>{
+  const oppIdxs = poolOpp.players.map((p,i)=>i).filter(i=> !remainingOppPlayers || remainingOppPlayers.includes(poolOpp.players[i]));
+  if (!oppIdxs.length){
+    return `<p class="note" style="margin-top:0;">All ${esc(poolOpp.name)} players are paired for this round.</p>`;
+  }
+  const rows = oppIdxs.map((opIdx)=>{
+    const op = poolOpp.players[opIdx];
     const oppLabel = `<td class="matrix-name">${esc(op)}${plainFactionTag(poolOpp.factions[opIdx])}${plainListLink(poolOpp.bcpLinks[opIdx])}</td>`;
     const cells = remainingPlayers.map(p=>{
       const myIdx = myTeam.players.indexOf(p);
       const ratings = (myIdx>=0 && myTeam.teamMatchupRatings && myTeam.teamMatchupRatings[myIdx]) || {};
       const val = ratings[`${poolOpp.name}::${op}`];
-      const isHighlighted = highlightPlayer && p === highlightPlayer;
-      return `<td class="${isHighlighted ? 'col-highlight' : ''}">${val!=null ? `<span class="rating-cell r${val}">${val}</span>` : '<span class="dim">—</span>'}</td>`;
+      const isColHighlighted = highlightCol && p === highlightCol;
+      const isCellHighlighted = highlightCell && op === highlightCell.row && highlightCell.cols.includes(p);
+      const cls = isCellHighlighted ? 'cell-highlight' : (isColHighlighted ? 'col-highlight' : '');
+      return `<td class="${cls}">${val!=null ? `<span class="rating-cell r${val}">${val}</span>` : '<span class="dim">—</span>'}</td>`;
     }).join('');
     return `<tr>${oppLabel}${cells}</tr>`;
   }).join('');
@@ -1565,7 +1620,13 @@ function eventOpponentPreviewHTML(myTeam, poolOpp, remainingPlayers, highlightPl
 function ourMatrixPreviewHTML(round){
   const remaining = round.poolA;
   const total = state.teamA.players.length;
-  const pendingDefender = round.chunk.phase === 'nominateDefenders' ? round.chunk.nomA.defender : null;
+  const c = round.chunk;
+  let highlight = null;
+  if (c.phase === 'nominateDefenders' && c.nomA.defender){
+    highlight = { col: c.nomA.defender };
+  } else if (c.phase === 'nominateAttackers' && c.nomB.defender && c.nomA.attackers.length){
+    highlight = { cell: { row: c.nomB.defender, cols: c.nomA.attackers } };
+  }
   const poolOpp = (state.opponentTeams||[]).find(o=>o.name===state.teamB.name);
   let titleSuffix = '';
   let body;
@@ -1573,15 +1634,15 @@ function ourMatrixPreviewHTML(round){
     body = '<p class="note" style="margin-top:0;">All your players are paired for this round.</p>';
   } else if (poolOpp){
     titleSuffix = ` vs ${esc(state.teamB.name)}`;
-    body = eventOpponentPreviewHTML(state.teamA, poolOpp, remaining, pendingDefender);
+    body = eventOpponentPreviewHTML(state.teamA, poolOpp, remaining, highlight, round.poolB);
   } else {
     const myLinked = state.teamA.linkedProfileCode ? linkedProfileCache[state.teamA.linkedProfileCode] : null;
     const oppCode = findTrackedOpponentCode(myLinked, state.teamB);
     if (oppCode){
       titleSuffix = ` vs ${esc(state.teamB.name)}`;
-      body = ourOpponentSpecificPreviewHTML(myLinked, oppCode, state.teamB.name, remaining, pendingDefender);
+      body = ourOpponentSpecificPreviewHTML(myLinked, oppCode, state.teamB.name, remaining, highlight, round.poolB);
     } else {
-      body = matchupMatrixReadOnlyHTML('a', state.teamA, remaining, pendingDefender);
+      body = matchupMatrixReadOnlyHTML('a', state.teamA, remaining, highlight && highlight.col);
     }
   }
   return `<div class="panel">
@@ -1742,19 +1803,14 @@ function atkCardHTML(player, chosen, field, side, defSide, defName){
 
 function assignTablesHTML(round){
   const c = round.chunk;
-  const avail = availableTables(round);
   return `
-  <p class="dim" style="font-size:13px;margin-top:0;">Each defender's team claims a table, then picks the layout (A/B/C) for their game.</p>
+  <p class="dim" style="font-size:13px;margin-top:0;">Table's assigned automatically — just pick the layout (A/B/C) for each game.</p>
   ${c.confirmed.map((p,idx)=>{
     const teamLabel = p.defenderSide==='A' ? state.teamA.name : state.teamB.name;
     return `<div class="panel" style="background:var(--panel-alt);margin-bottom:10px;">
       <div style="margin-bottom:10px;font-size:13px;"><span class="dim">${esc(teamLabel)} defends:</span> <span style="color:var(--teamA)">${esc(p.playerA)}${dispTag('a',p.playerA)}${listLinkHTML('a',p.playerA)}</span> vs <span style="color:var(--teamB)">${esc(p.playerB)}${dispTag('b',p.playerB)}${listLinkHTML('b',p.playerB)}</span></div>
-      <div style="display:flex;flex-wrap:wrap;gap:18px;">
-        <div>
-          <div class="field-label">Table</div>
-          ${p.tableId ? `<div class="hud-badge mono">T${p.tableId} — ${esc(tableLabel(p.tableId))} ✓</div>` :
-          `<div style="display:flex;gap:8px;flex-wrap:wrap;">${avail.map(t=>`<button class="btn" data-action="pick-table" data-idx="${idx}" data-table="${t.id}">T${t.id} — ${esc(t.label)}</button>`).join('')}</div>`}
-        </div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:center;">
+        <div class="hud-badge mono">T${p.tableId} — ${esc(tableLabel(p.tableId))}</div>
         <div>
           <div class="field-label">Layout</div>
           ${p.layout ? `<div class="hud-badge mono">LAYOUT ${esc(p.layout)} ✓</div>` :
@@ -1764,7 +1820,7 @@ function assignTablesHTML(round){
     </div>`;
   }).join('')}
   <div class="btn-row">
-    <button class="btn btn-primary" data-action="confirm-tables" ${c.confirmed.every(p=>p.tableId && p.layout) ? '' : 'disabled'}>Lock in &amp; continue →</button>
+    <button class="btn btn-primary" data-action="confirm-tables" ${c.confirmed.every(p=>p.layout) ? '' : 'disabled'}>Lock in &amp; continue →</button>
   </div>
   ${champPreviewHTML(round)}`;
 }
@@ -1772,20 +1828,15 @@ function tableLabel(id){ const t = state.tables.find(t=>t.id===id); return t?t.l
 
 function finalTablesHTML(round){
   const c = round.chunk;
-  const avail = availableTables(round);
   const labels = ['🔁 REJECT REMATCH — this round\'s two refused attackers', '🏆 CHAMPION MATCH — the two players never offered'];
   return `
-  <p class="dim" style="font-size:13px;margin-top:0;">These last two matchups are set automatically — claim a table and layout for each.</p>
+  <p class="dim" style="font-size:13px;margin-top:0;">These last two matchups are set automatically — table's assigned, just pick the layout for each.</p>
   ${c.confirmed.map((p,idx)=>`
     <div class="panel" style="background:var(--panel-alt);margin-bottom:10px;">
       <div class="eyebrow" style="margin-bottom:8px;">${labels[idx]||''}</div>
       <div style="margin-bottom:10px;font-size:13px;"><span style="color:var(--teamA)">${esc(p.playerA)}${dispTag('a',p.playerA)}${listLinkHTML('a',p.playerA)}</span> vs <span style="color:var(--teamB)">${esc(p.playerB)}${dispTag('b',p.playerB)}${listLinkHTML('b',p.playerB)}</span></div>
-      <div style="display:flex;flex-wrap:wrap;gap:18px;">
-        <div>
-          <div class="field-label">Table</div>
-          ${p.tableId ? `<div class="hud-badge mono">T${p.tableId} — ${esc(tableLabel(p.tableId))} ✓</div>` :
-          `<div style="display:flex;gap:8px;flex-wrap:wrap;">${avail.map(t=>`<button class="btn" data-action="pick-final-table" data-idx="${idx}" data-table="${t.id}">T${t.id} — ${esc(t.label)}</button>`).join('')}</div>`}
-        </div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:center;">
+        <div class="hud-badge mono">T${p.tableId} — ${esc(tableLabel(p.tableId))}</div>
         <div>
           <div class="field-label">Layout</div>
           ${p.layout ? `<div class="hud-badge mono">LAYOUT ${esc(p.layout)} ✓</div>` :
@@ -1794,7 +1845,7 @@ function finalTablesHTML(round){
       </div>
     </div>`).join('')}
   <div class="btn-row">
-    <button class="btn btn-primary" data-action="confirm-final-tables" ${c.confirmed.every(p=>p.tableId && p.layout) ? '' : 'disabled'}>Finish round draft →</button>
+    <button class="btn btn-primary" data-action="confirm-final-tables" ${c.confirmed.every(p=>p.layout) ? '' : 'disabled'}>Finish round draft →</button>
   </div>`;
 }
 
@@ -1980,7 +2031,8 @@ function spectatorBodyHTML(){
 }
 let spectateCode = null;
 let spectatorTimer = null;
-async function initSpectatorMode(code){
+async function initSpectatorMode(code, teamSlug){
+  if (teamSlug) applyNamespace(teamSlug);
   spectateCode = code.trim().toUpperCase();
   const found = await tryLoad(spectateCode);
   if (!found){ app.innerHTML = spectatorNotFoundHTML(); return; }
@@ -2113,6 +2165,9 @@ function afterChunkConfirmed(round){
     ];
     nextChunk.phase = 'finalTables';
     round.poolA = []; round.poolB = [];
+    round.chunk = nextChunk;
+    autoAssignTables(round);
+    return;
   } else if (round.poolA.length === 0){
     round.status = 'scoring';
   } else {
@@ -2127,17 +2182,62 @@ app.addEventListener('click', async (e)=>{
   if (!el) return;
   const action = el.dataset.action;
 
-  if (action === 'submit-password'){
-    const input = document.getElementById('app-password');
-    const val = input ? input.value : '';
-    if (val === APP_PASSWORD){
-      setAuthed();
-      await attemptAutoLoad();
-      route();
-    } else {
-      const err = document.getElementById('password-error');
-      if (err) err.textContent = 'Incorrect password.';
+  if (UNDO_CHECKPOINT_ACTIONS.has(action) && state){
+    undoStack.push(JSON.parse(JSON.stringify(state)));
+    if (undoStack.length > UNDO_STACK_LIMIT) undoStack.shift();
+  }
+
+  if (action === 'login'){
+    const select = document.getElementById('login-team-select');
+    const pwInput = document.getElementById('login-password');
+    const errEl = document.getElementById('login-error');
+    const slug = select ? select.value : '';
+    const pw = pwInput ? pwInput.value : '';
+    if (!slug){ if (errEl) errEl.textContent = 'Choose your team first.'; return; }
+    if (!pw){ if (errEl) errEl.textContent = 'Enter your password.'; return; }
+    await loadAuthRegistry();
+    const entry = authRegistryCache.teams.find(t=>t.slug===slug);
+    if (!entry){ if (errEl) errEl.textContent = 'Team not found — try refreshing the page.'; return; }
+    const hash = await hashPassword(pw);
+    if (hash !== entry.passwordHash){ if (errEl) errEl.textContent = 'Incorrect password.'; return; }
+    setAuthed(slug);
+    await attemptAutoLoad();
+    route();
+    return;
+  }
+  if (action === 'show-register'){
+    authView = 'register';
+    route();
+    return;
+  }
+  if (action === 'show-login'){
+    authView = 'login';
+    route();
+    return;
+  }
+  if (action === 'register'){
+    const nameInput = document.getElementById('register-team-name');
+    const pwInput = document.getElementById('register-password');
+    const pw2Input = document.getElementById('register-password-confirm');
+    const errEl = document.getElementById('register-error');
+    const name = nameInput ? nameInput.value.trim() : '';
+    const pw = pwInput ? pwInput.value : '';
+    const pw2 = pw2Input ? pw2Input.value : '';
+    if (!name){ if (errEl) errEl.textContent = 'Enter a team name.'; return; }
+    if (!pw || pw.length < 4){ if (errEl) errEl.textContent = 'Password must be at least 4 characters.'; return; }
+    if (pw !== pw2){ if (errEl) errEl.textContent = 'Passwords don\u2019t match.'; return; }
+    const slug = slugifyTeamName(name);
+    await loadAuthRegistry();
+    if (authRegistryCache.teams.some(t=>t.slug===slug || t.name.toLowerCase()===name.toLowerCase())){
+      if (errEl) errEl.textContent = 'That team name is already registered — pick another, or log in if this is you.';
+      return;
     }
+    const hash = await hashPassword(pw);
+    authRegistryCache.teams.push({ name, slug, passwordHash: hash });
+    await saveAuthRegistry(authRegistryCache);
+    setAuthed(slug);
+    await attemptAutoLoad();
+    route();
     return;
   }
   if (action === 'logout'){
@@ -2145,11 +2245,12 @@ app.addEventListener('click', async (e)=>{
     state = null; currentCode = null;
     teamProfile = null; teamProfileCode = null;
     mode = 'event';
+    authView = 'login';
     route();
     return;
   }
   if (action === 'copy-spectator-link'){
-    const url = `${window.location.origin}${window.location.pathname}?spectate=${state.code}`;
+    const url = `${window.location.origin}${window.location.pathname}?spectate=${state.code}&team=${activeTeamSlug}`;
     try {
       await navigator.clipboard.writeText(url);
       alert(`Spectator link copied:\n${url}\n\nShare this with anyone — no password needed, view-only, no matchup ratings shown.`);
@@ -2159,12 +2260,12 @@ app.addEventListener('click', async (e)=>{
     return;
   }
   if (action === 'go-home'){
-    try { await storage.delete(LAST_CODE_KEY, false); } catch(err){ /* non-fatal */ }
-    try { await storage.delete(LAST_TEAM_CODE_KEY, false); } catch(err){ /* non-fatal */ }
+    try { await window.storage.delete(LAST_CODE_KEY, false); } catch(err){ /* non-fatal */ }
+    try { await window.storage.delete(LAST_TEAM_CODE_KEY, false); } catch(err){ /* non-fatal */ }
     state = null; currentCode = null;
     teamProfile = null; teamProfileCode = null;
     mode = 'event';
-    eventView = null;
+    eventView = null; undoStack = [];
     await refreshIndex();
     route();
     return;
@@ -2191,7 +2292,7 @@ app.addEventListener('click', async (e)=>{
       if (p.disposition) ev.teamA.dispositions[i] = p.disposition;
       ev.teamA.bcpLinks[i] = p.listLink || '';
     });
-    ev.opponentTeams = bcpImportPreview.teams.filter(t=>t.selected && !t.isMine).map(t=>{
+    ev.opponentTeams = bcpImportPreview.teams.filter(t=>!t.isMine).map(t=>{
       const players = t.players.slice(0,8).map(p=>p.name);
       const factions = t.players.slice(0,8).map(p=>p.faction||'');
       const dispositions = t.players.slice(0,8).map(p=>p.disposition||'');
@@ -2203,7 +2304,7 @@ app.addEventListener('click', async (e)=>{
     state = ev;
     currentCode = code;
     mode = 'event';
-    eventView = null;
+    eventView = null; undoStack = [];
     await saveState();
     await persistLastCode();
     await refreshIndex();
@@ -2232,7 +2333,7 @@ app.addEventListener('click', async (e)=>{
     state = newEvent(code);
     currentCode = code;
     mode = 'event';
-    eventView = null;
+    eventView = null; undoStack = [];
     await saveState();
     await persistLastCode();
     await refreshIndex();
@@ -2247,14 +2348,14 @@ app.addEventListener('click', async (e)=>{
   }
   if (action === 'pick-event'){
     const found = await tryLoad(el.dataset.code);
-    if (found){ mode = 'event'; eventView = null; await persistLastCode(); await refreshIndex(); }
+    if (found){ mode = 'event'; eventView = null; undoStack = []; await persistLastCode(); await refreshIndex(); }
     route();
     return;
   }
   if (action === 'delete-team'){
     const code = el.dataset.code, name = el.dataset.name;
     if (!window.confirm(`Delete team profile "${name}" (${code})? This can't be undone.`)) return;
-    try { await storage.delete(TEAM_PREFIX+code, true); } catch(err){ /* non-fatal */ }
+    try { await window.storage.delete(TEAM_PREFIX+code, true); } catch(err){ /* non-fatal */ }
     await removeIndexEntry('teams', code);
     if (teamProfileCode === code){ teamProfile = null; teamProfileCode = null; }
     route();
@@ -2263,7 +2364,7 @@ app.addEventListener('click', async (e)=>{
   if (action === 'delete-event'){
     const code = el.dataset.code, name = el.dataset.name;
     if (!window.confirm(`Delete event "${name}" (${code})? This can't be undone.`)) return;
-    try { await storage.delete(STORAGE_PREFIX+code, true); } catch(err){ /* non-fatal */ }
+    try { await window.storage.delete(STORAGE_PREFIX+code, true); } catch(err){ /* non-fatal */ }
     await removeIndexEntry('events', code);
     if (currentCode === code){ state = null; currentCode = null; }
     route();
@@ -2284,7 +2385,7 @@ app.addEventListener('click', async (e)=>{
     if (!window.confirm(`Delete ${codes.length} ${noun}${codes.length!==1?'s':''}? This can't be undone.`)) return;
     const prefix = list === 'teams' ? TEAM_PREFIX : STORAGE_PREFIX;
     for (const code of codes){
-      try { await storage.delete(prefix+code, true); } catch(err){ /* non-fatal, keep going */ }
+      try { await window.storage.delete(prefix+code, true); } catch(err){ /* non-fatal, keep going */ }
       await removeIndexEntry(list, code);
       if (list === 'teams' && teamProfileCode === code){ teamProfile = null; teamProfileCode = null; }
       if (list === 'events' && currentCode === code){ state = null; currentCode = null; }
@@ -2302,7 +2403,7 @@ app.addEventListener('click', async (e)=>{
     const found = await tryLoad(code);
     if (!found){ if (errEl) errEl.textContent = `No event found for code ${code.toUpperCase()}.`; return; }
     mode = 'event';
-    eventView = null;
+    eventView = null; undoStack = [];
     await persistLastCode();
     route();
     return;
@@ -2310,7 +2411,7 @@ app.addEventListener('click', async (e)=>{
   if (action === 'refresh'){
     if (currentCode){
       try{
-        const res = await storage.get(STORAGE_PREFIX+currentCode, true);
+        const res = await window.storage.get(STORAGE_PREFIX+currentCode, true);
         if (res && res.value){ state = JSON.parse(res.value); migrateState(); }
       }catch(err){ /* ignore */ }
     }
@@ -2318,8 +2419,41 @@ app.addEventListener('click', async (e)=>{
     route();
     return;
   }
+  if (action === 'undo-last-action'){
+    if (!undoStack.length) return;
+    state = undoStack.pop();
+    scheduleSave();
+    route();
+    return;
+  }
   if (action === 'toggle-matchups-view'){
     eventView = eventView === 'matchups' ? null : 'matchups';
+    route();
+    return;
+  }
+  if (action === 'toggle-workspace-view'){
+    eventView = eventView === 'workspace' ? null : 'workspace';
+    route();
+    return;
+  }
+  if (action === 'delete-list'){
+    const idx = parseInt(el.dataset.idx), listIdx = parseInt(el.dataset.listIdx);
+    if (state.workspace.lists[idx]) state.workspace.lists[idx].splice(listIdx, 1);
+    scheduleSave();
+    route();
+    return;
+  }
+  if (action === 'add-list-version'){
+    const idx = parseInt(el.dataset.idx);
+    const ta = document.getElementById('list-paste-'+idx);
+    const nameInput = document.getElementById('list-name-'+idx);
+    const text = ta ? ta.value.trim() : '';
+    if (!text) return;
+    if (!state.workspace.lists[idx]) state.workspace.lists[idx] = [];
+    const customName = nameInput ? nameInput.value.trim() : '';
+    const versionNum = state.workspace.lists[idx].length + 1;
+    state.workspace.lists[idx].push({ name: customName || `Version ${versionNum}`, content: text, uploadedAt: Date.now() });
+    scheduleSave();
     route();
     return;
   }
@@ -2340,7 +2474,7 @@ app.addEventListener('click', async (e)=>{
   if (action === 'refresh-profile'){
     if (teamProfileCode){
       try{
-        const res = await storage.get(TEAM_PREFIX+teamProfileCode, true);
+        const res = await window.storage.get(TEAM_PREFIX+teamProfileCode, true);
         if (res && res.value){ teamProfile = JSON.parse(res.value); migrateTeamProfile(); }
       }catch(err){ /* ignore */ }
     }
@@ -2353,7 +2487,7 @@ app.addEventListener('click', async (e)=>{
     mode = 'team';
     if (!teamProfile){
       try {
-        const last = await storage.get(LAST_TEAM_CODE_KEY, false);
+        const last = await window.storage.get(LAST_TEAM_CODE_KEY, false);
         if (last && last.value){
           const code = JSON.parse(last.value).code;
           await tryLoadTeamProfile(code);
@@ -2415,7 +2549,7 @@ app.addEventListener('click', async (e)=>{
     const code = (codeInput ? codeInput.value : '').trim().toUpperCase();
     if (!code){ if (errEl) errEl.textContent = 'Choose or enter a team profile first.'; return; }
     try {
-      const res = await storage.get(TEAM_PREFIX+code, true);
+      const res = await window.storage.get(TEAM_PREFIX+code, true);
       if (res && res.value){
         const profile = JSON.parse(res.value);
         const target = el.dataset.target === 'A' ? state.teamA : state.teamB;
@@ -2490,20 +2624,6 @@ app.addEventListener('click', async (e)=>{
     route();
     return;
   }
-  if (action === 'pick-table'){
-    const round = curRound();
-    const idx = parseInt(el.dataset.idx);
-    round.chunk.confirmed[idx].tableId = parseInt(el.dataset.table);
-    scheduleSave(); route();
-    return;
-  }
-  if (action === 'pick-final-table'){
-    const round = curRound();
-    const idx = parseInt(el.dataset.idx);
-    round.chunk.confirmed[idx].tableId = parseInt(el.dataset.table);
-    scheduleSave(); route();
-    return;
-  }
   if (action === 'pick-layout' || action === 'pick-final-layout'){
     const round = curRound();
     const idx = parseInt(el.dataset.idx);
@@ -2566,19 +2686,20 @@ app.addEventListener('click', async (e)=>{
     round.poolB = round.poolB.filter(p=>p!==c.nomB.defender && p!==c.acceptForA);
     c.confirmed = [pairing1, pairing2];
     c.phase = 'assignTables';
+    autoAssignTables(round);
     scheduleSave(); route();
     return;
   }
   if (action === 'confirm-tables'){
     const round = curRound();
-    if (!round.chunk.confirmed.every(p=>p.tableId && p.layout)) return;
+    if (!round.chunk.confirmed.every(p=>p.layout)) return;
     afterChunkConfirmed(round);
     scheduleSave(); route();
     return;
   }
   if (action === 'confirm-final-tables'){
     const round = curRound();
-    if (!round.chunk.confirmed.every(p=>p.tableId && p.layout)) return;
+    if (!round.chunk.confirmed.every(p=>p.layout)) return;
     round.chunk.confirmed.forEach(p=>round.pairings.push(p));
     round.status = 'scoring';
     round.chunk = freshChunk();
@@ -2683,13 +2804,6 @@ app.addEventListener('change', async (e)=>{
     route();
     return;
   }
-  if (el.dataset.action === 'toggle-bcp-team'){
-    const idx = parseInt(el.dataset.idx);
-    if (bcpImportPreview && bcpImportPreview.teams && bcpImportPreview.teams[idx]){
-      bcpImportPreview.teams[idx].selected = el.checked;
-    }
-    return;
-  }
   if (el.dataset.action === 'set-bcp-mine'){
     const idx = parseInt(el.dataset.idx);
     if (bcpImportPreview && bcpImportPreview.teams){
@@ -2784,20 +2898,10 @@ app.addEventListener('keydown', (e)=>{
 });
 
 /* ---------------- boot ---------------- */
-function notConfiguredHTML(){
-  return `
-  <div class="hud-header"><div class="hud-brand"><span class="bracket">[</span> 8-MAN MATCHUP CONSOLE <span class="bracket">]</span></div></div>
-  <div class="panel landing-card">
-    <div class="eyebrow" style="color:var(--warn);">SETUP NEEDED</div>
-    <h2>Firebase isn't configured yet</h2>
-    <p class="dim" style="font-size:13px;">This page can't save or sync anything until it's connected to a Firebase project. Open this file's source, find the <code>firebaseConfig</code> object near the top of the script, and paste in your own project's values (Firebase console → Project settings → Your apps). Full steps are in the comment right above it.</p>
-    <p class="note">Once that's filled in, reload this page.</p>
-  </div>`;
-}
 async function attemptAutoLoad(){
   await refreshIndex();
   try {
-    const last = await storage.get(LAST_CODE_KEY, false);
+    const last = await window.storage.get(LAST_CODE_KEY, false);
     if (last && last.value){
       const code = JSON.parse(last.value).code;
       const found = await tryLoad(code);
@@ -2806,15 +2910,18 @@ async function attemptAutoLoad(){
   } catch(e){ /* fall through to hub */ }
 }
 (async function init(){
-  if (!firebaseReady){ app.innerHTML = notConfiguredHTML(); return; }
   const urlParams = new URLSearchParams(window.location.search);
   const spectateParam = urlParams.get('spectate');
   if (spectateParam){
-    await initSpectatorMode(spectateParam);
+    await initSpectatorMode(spectateParam, urlParams.get('team'));
     return;
   }
   authenticated = checkAuth();
-  if (!authenticated){ route(); return; }
+  if (!authenticated){
+    await loadAuthRegistry();
+    route();
+    return;
+  }
   await attemptAutoLoad();
   route();
 })();
