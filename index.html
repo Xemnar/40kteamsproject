@@ -825,11 +825,22 @@ function findTrackedOpponentCode(myLinked, oppTeam){
   return null;
 }
 function getEffectiveMatchupRating(side, playerName, oppSide, oppName){
-  // Prefer a specific opponent-team rating (from a tracked opponent-specific
-  // matrix) over the generic disposition-based one, when this opponent's team
-  // is one I'm tracking and I've rated this exact player.
+  // Prefer a specific opponent-team rating over the generic disposition-based
+  // one, when this opponent's team is one I have specific ratings for and
+  // I've rated this exact player.
   const myTeam = (side==='a' || side==='A') ? state.teamA : state.teamB;
   const oppTeam = (oppSide==='a' || oppSide==='A') ? state.teamA : state.teamB;
+
+  // 1. Event-local opponent pool (the current, primary mechanism)
+  if ((side==='a' || side==='A') && state.opponentTeams && state.opponentTeams.some(o=>o.name===oppTeam.name)){
+    const myIdx = myTeam.players.indexOf(playerName);
+    if (myIdx>=0 && myTeam.teamMatchupRatings && myTeam.teamMatchupRatings[myIdx]){
+      const specific = myTeam.teamMatchupRatings[myIdx][`${oppTeam.name}::${oppName}`];
+      if (specific!=null && specific!=='') return specific;
+    }
+  }
+
+  // 2. Linked-profile tracked opponent (older mechanism, still supported)
   const myLinked = myTeam.linkedProfileCode ? linkedProfileCache[myTeam.linkedProfileCode] : null;
   const oppCode = findTrackedOpponentCode(myLinked, oppTeam);
   if (oppCode){
@@ -1447,6 +1458,10 @@ function setupHTML(){
     ${ratingKeyHTML()}
     ${(()=>{
       if (needsFirstOpponent) return '';
+      const inPool = (state.opponentTeams||[]).some(o=>o.name===state.teamB.name);
+      if (inPool){
+        return `<p class="note" style="color:var(--good);margin-top:10px;">✓ You have a matchup matrix specifically for ${esc(state.teamB.name)} — it'll be used in place of the generic one above during pairing.</p>`;
+      }
       const myLinked = state.teamA.linkedProfileCode ? linkedProfileCache[state.teamA.linkedProfileCode] : null;
       const oppCode = findTrackedOpponentCode(myLinked, state.teamB);
       if (oppCode){
@@ -1526,21 +1541,48 @@ function ourOpponentSpecificPreviewHTML(myLinked, oppCode, oppTeamName, remainin
     <tbody>${rows}</tbody>
   </table></div>`;
 }
+function eventOpponentPreviewHTML(myTeam, poolOpp, remainingPlayers, highlightPlayer){
+  const headerCells = remainingPlayers.map(p=>{
+    const isHighlighted = highlightPlayer && p === highlightPlayer;
+    return `<th class="${isHighlighted ? 'col-highlight' : ''}">${esc(p)}</th>`;
+  }).join('');
+  const rows = poolOpp.players.map((op, opIdx)=>{
+    const oppLabel = `<td class="matrix-name">${esc(op)}${plainFactionTag(poolOpp.factions[opIdx])}${plainListLink(poolOpp.bcpLinks[opIdx])}</td>`;
+    const cells = remainingPlayers.map(p=>{
+      const myIdx = myTeam.players.indexOf(p);
+      const ratings = (myIdx>=0 && myTeam.teamMatchupRatings && myTeam.teamMatchupRatings[myIdx]) || {};
+      const val = ratings[`${poolOpp.name}::${op}`];
+      const isHighlighted = highlightPlayer && p === highlightPlayer;
+      return `<td class="${isHighlighted ? 'col-highlight' : ''}">${val!=null ? `<span class="rating-cell r${val}">${val}</span>` : '<span class="dim">—</span>'}</td>`;
+    }).join('');
+    return `<tr>${oppLabel}${cells}</tr>`;
+  }).join('');
+  return `<div class="matrix-scroll"><table class="matchup-matrix">
+    <thead><tr><th></th>${headerCells}</tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
 function ourMatrixPreviewHTML(round){
   const remaining = round.poolA;
   const total = state.teamA.players.length;
   const pendingDefender = round.chunk.phase === 'nominateDefenders' ? round.chunk.nomA.defender : null;
-  const myLinked = state.teamA.linkedProfileCode ? linkedProfileCache[state.teamA.linkedProfileCode] : null;
-  const oppCode = findTrackedOpponentCode(myLinked, state.teamB);
+  const poolOpp = (state.opponentTeams||[]).find(o=>o.name===state.teamB.name);
   let titleSuffix = '';
   let body;
   if (!remaining.length){
     body = '<p class="note" style="margin-top:0;">All your players are paired for this round.</p>';
-  } else if (oppCode){
+  } else if (poolOpp){
     titleSuffix = ` vs ${esc(state.teamB.name)}`;
-    body = ourOpponentSpecificPreviewHTML(myLinked, oppCode, state.teamB.name, remaining, pendingDefender);
+    body = eventOpponentPreviewHTML(state.teamA, poolOpp, remaining, pendingDefender);
   } else {
-    body = matchupMatrixReadOnlyHTML('a', state.teamA, remaining, pendingDefender);
+    const myLinked = state.teamA.linkedProfileCode ? linkedProfileCache[state.teamA.linkedProfileCode] : null;
+    const oppCode = findTrackedOpponentCode(myLinked, state.teamB);
+    if (oppCode){
+      titleSuffix = ` vs ${esc(state.teamB.name)}`;
+      body = ourOpponentSpecificPreviewHTML(myLinked, oppCode, state.teamB.name, remaining, pendingDefender);
+    } else {
+      body = matchupMatrixReadOnlyHTML('a', state.teamA, remaining, pendingDefender);
+    }
   }
   return `<div class="panel">
     <div class="panel-title"><h3>📊 ${esc(state.teamA.name)}'s matchup matrix${titleSuffix}</h3><span class="dim mono" style="font-size:11px;">${remaining.length} OF ${total} REMAINING</span></div>
