@@ -492,6 +492,8 @@ const UNDO_CHECKPOINT_ACTIONS = new Set([
 ]);
 let authView = 'login'; // 'login' | 'register' | 'admin-login'
 let isAdmin = false;
+let adminResetSlug = null; // which team's password-reset form is open, if any
+let adminResetDone = null; // name of the team whose password was just reset, for the confirmation message
 // Admin can ONLY delete registered teams and their data — it cannot create teams,
 // cannot log into any team's own space, and isn't part of the per-team password
 // system at all. Same caveat as everything else here: a client-side gate, not
@@ -1250,11 +1252,30 @@ function adminPanelHTML(){
   </div>
   <div class="panel">
     <div class="panel-title"><h2>Admin</h2><span class="eyebrow">REGISTERED TEAMS</span></div>
-    <p class="dim" style="font-size:13px;margin-top:0;">Deleting a team removes their login and every event/workspace they've created. This can't be undone.</p>
+    <p class="dim" style="font-size:13px;margin-top:0;">Deleting a team removes their login and every event/workspace they've created. This can't be undone. Resetting a password doesn't touch any of their data — they just need it if they've forgotten their own.</p>
+    ${adminResetDone ? `<p class="note" style="color:var(--good);">✓ Password reset for "${esc(adminResetDone)}" — let them know their new password.</p>` : ''}
     ${teams.length ? teams.map(t=>`
-      <div class="pool-item" style="display:flex;align-items:center;gap:10px;">
-        <span style="flex:1;">${esc(t.name)} <span class="dim mono" style="font-size:10px;">${esc(t.slug)}</span></span>
-        <button class="btn-ghost pick-del" data-action="admin-delete-team" data-slug="${esc(t.slug)}" data-name="${esc(t.name)}" title="Delete this team and all its data">🗑 delete</button>
+      <div style="border-bottom:1px solid var(--line-soft);padding-bottom:10px;margin-bottom:10px;">
+        <div class="pool-item" style="display:flex;align-items:center;gap:10px;border:none;padding:0;">
+          <span style="flex:1;">${esc(t.name)} <span class="dim mono" style="font-size:10px;">${esc(t.slug)}</span></span>
+          <button class="btn-ghost" data-action="admin-toggle-reset" data-slug="${esc(t.slug)}">🔑 reset password</button>
+          <button class="btn-ghost pick-del" data-action="admin-delete-team" data-slug="${esc(t.slug)}" data-name="${esc(t.name)}" title="Delete this team and all its data">🗑 delete</button>
+        </div>
+        ${adminResetSlug === t.slug ? `
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+          <div>
+            <div class="field-label">New password</div>
+            <input type="password" id="admin-reset-password" placeholder="At least 4 characters">
+          </div>
+          <div>
+            <div class="field-label">Confirm</div>
+            <input type="password" id="admin-reset-password-confirm" placeholder="Type it again">
+          </div>
+          <button class="btn btn-primary" data-action="admin-reset-password" data-slug="${esc(t.slug)}" data-name="${esc(t.name)}">Save new password</button>
+          <button class="btn-ghost" data-action="admin-toggle-reset" data-slug="${esc(t.slug)}">Cancel</button>
+        </div>
+        <div id="admin-reset-error" class="error-text"></div>
+        ` : ''}
       </div>
     `).join('') : '<p class="note" style="margin-top:0;">No teams registered yet.</p>'}
   </div>`;
@@ -2412,6 +2433,8 @@ app.addEventListener('click', async (e)=>{
   if (action === 'admin-logout'){
     isAdmin = false;
     authView = 'login';
+    adminResetSlug = null;
+    adminResetDone = null;
     route();
     return;
   }
@@ -2611,6 +2634,39 @@ app.addEventListener('click', async (e)=>{
     if (!window.confirm(`Delete team "${name}" and ALL of their events and workspace data? This can't be undone.`)) return;
     await adminDeleteTeam(slug);
     route();
+    return;
+  }
+  if (action === 'admin-toggle-reset'){
+    if (!isAdmin) return;
+    const slug = el.dataset.slug;
+    adminResetSlug = adminResetSlug === slug ? null : slug;
+    adminResetDone = null;
+    route();
+    return;
+  }
+  if (action === 'admin-reset-password'){
+    if (!isAdmin) return;
+    const slug = el.dataset.slug, name = el.dataset.name;
+    const pwInput = document.getElementById('admin-reset-password');
+    const pw2Input = document.getElementById('admin-reset-password-confirm');
+    const errEl = document.getElementById('admin-reset-error');
+    const pw = pwInput ? pwInput.value : '';
+    const pw2 = pw2Input ? pw2Input.value : '';
+    if (!pw || pw.length < 4){ if (errEl) errEl.textContent = 'Password must be at least 4 characters.'; return; }
+    if (pw !== pw2){ if (errEl) errEl.textContent = 'Passwords don\u2019t match.'; return; }
+    if (!cryptoAvailable()){ if (errEl) errEl.textContent = INSECURE_CONTEXT_MSG; return; }
+    try {
+      const hash = await hashPassword(pw);
+      const entry = authRegistryCache.teams.find(t=>t.slug===slug);
+      if (!entry){ if (errEl) errEl.textContent = 'Team not found — try refreshing.'; return; }
+      entry.passwordHash = hash;
+      await saveAuthRegistry(authRegistryCache);
+      adminResetSlug = null;
+      adminResetDone = name;
+      route();
+    } catch(err){
+      if (errEl) errEl.textContent = `Something went wrong (${err.message||err}). Try again.`;
+    }
     return;
   }
   if (action === 'delete-event'){
