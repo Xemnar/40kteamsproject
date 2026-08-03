@@ -967,6 +967,9 @@ function listLinkHTML(side, name){
 function plainFactionTag(faction){
   return faction ? ` <span class="mono dim" style="font-size:10px;">(${esc(faction)})</span>` : '';
 }
+function plainDispositionTag(disposition){
+  return disposition ? `<br><span class="mono" style="font-size:10px;color:var(--gold);">${esc(disposition)}</span>` : '';
+}
 function plainListLink(url){
   return url ? ` <a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="list-link">📋 list</a>` : '';
 }
@@ -1098,9 +1101,9 @@ function route(){
 }
 
 function eventOpponentMatrixBlockHTML(myTeam, opp){
-  const headerCells = myTeam.players.map((p,i)=>`<th>${esc(p)}${plainFactionTag(myTeam.factions[i])}${plainListLink(myTeam.bcpLinks[i])}</th>`).join('');
+  const headerCells = myTeam.players.map((p,i)=>`<th>${esc(p)}${plainFactionTag(myTeam.factions[i])}${plainDispositionTag(myTeam.dispositions&&myTeam.dispositions[i])}${plainListLink(myTeam.bcpLinks[i])}</th>`).join('');
   const rows = opp.players.map((op,opIdx)=>{
-    const oppLabel = `<td class="matrix-name">${esc(op)}${plainFactionTag(opp.factions[opIdx])}${plainListLink(opp.bcpLinks[opIdx])}</td>`;
+    const oppLabel = `<td class="matrix-name">${esc(op)}${plainFactionTag(opp.factions[opIdx])}${plainDispositionTag(opp.dispositions&&opp.dispositions[opIdx])}${plainListLink(opp.bcpLinks[opIdx])}</td>`;
     const ratingCells = myTeam.players.map((p,i)=>{
       const ratings = (myTeam.teamMatchupRatings && myTeam.teamMatchupRatings[i]) || {};
       const key = `${opp.name}::${op}`;
@@ -1496,13 +1499,13 @@ function teamMatrixHTML(team){
   return opponents.map(o => opponentMatrixBlockHTML(team, o)).join('');
 }
 function opponentMatrixBlockHTML(team, o){
-  const headerCells = team.players.map((p,i)=>`<th>${esc(p)}${plainFactionTag(team.factions[i])}${plainListLink(team.bcpLinks[i])}</th>`).join('');
+  const headerCells = team.players.map((p,i)=>`<th>${esc(p)}${plainFactionTag(team.factions[i])}${plainDispositionTag(team.dispositions&&team.dispositions[i])}${plainListLink(team.bcpLinks[i])}</th>`).join('');
   const oppRoster = o.players.length ? o.players : [null]; // null = no roster yet, still show one placeholder row
   const rows = oppRoster.map((op, opIdx)=>{
     if (op === null){
       return `<tr><td class="matrix-name dim">no roster yet</td>${team.players.map(()=>`<td><span class="dim">—</span></td>`).join('')}</tr>`;
     }
-    const oppLabel = `<td class="matrix-name">${esc(op)}${plainFactionTag(o.factions[opIdx])}${plainListLink(o.bcpLinks[opIdx])}</td>`;
+    const oppLabel = `<td class="matrix-name">${esc(op)}${plainFactionTag(o.factions[opIdx])}${plainDispositionTag(o.dispositions&&o.dispositions[opIdx])}${plainListLink(o.bcpLinks[opIdx])}</td>`;
     const ratingCells = team.players.map((p,i)=>{
       const ratings = (team.teamMatchupRatings && team.teamMatchupRatings[i]) || {};
       const key = `${o.code}::${op}`;
@@ -1772,14 +1775,16 @@ function ourOpponentSpecificPreviewHTML(myLinked, oppCode, oppTeamName, remainin
   const oppProfile = linkedProfileCache[oppCode];
   const oppPlayers = (oppProfile && oppProfile.players) ? oppProfile.players : [];
   const oppFactions = (oppProfile && oppProfile.factions) ? oppProfile.factions : [];
+  const oppDispositions = (oppProfile && oppProfile.dispositions) ? oppProfile.dispositions : [];
   const oppBcpLinks = (oppProfile && oppProfile.bcpLinks) ? oppProfile.bcpLinks : [];
   const highlightCol = highlight && highlight.col;
   const highlightCell = highlight && highlight.cell;
   const headerCells = remainingPlayers.map(p=>{
     const myIdx = myLinked.players ? myLinked.players.indexOf(p) : -1;
     const faction = myIdx>=0 && myLinked.factions ? myLinked.factions[myIdx] : '';
+    const disposition = myIdx>=0 && myLinked.dispositions ? myLinked.dispositions[myIdx] : '';
     const isHighlighted = highlightCol && p === highlightCol;
-    return `<th class="${isHighlighted ? 'col-highlight' : ''}">${esc(p)}${plainFactionTag(faction)}</th>`;
+    return `<th class="${isHighlighted ? 'col-highlight' : ''}">${esc(p)}${plainFactionTag(faction)}${plainDispositionTag(disposition)}</th>`;
   }).join('');
   const oppIdxs = oppPlayers.map((p,i)=>i).filter(i=> !remainingOppPlayers || remainingOppPlayers.includes(oppPlayers[i]));
   const roster = oppIdxs.length ? oppIdxs : [null];
@@ -1788,7 +1793,7 @@ function ourOpponentSpecificPreviewHTML(myLinked, oppCode, oppTeamName, remainin
       return `<tr><td class="matrix-name dim">${oppPlayers.length ? 'all opponent players paired for this round' : `no roster loaded for ${esc(oppTeamName)}`}</td>${remainingPlayers.map(()=>`<td><span class="dim">—</span></td>`).join('')}</tr>`;
     }
     const op = oppPlayers[opIdx];
-    const oppLabel = `<td class="matrix-name">${esc(op)}${plainFactionTag(oppFactions[opIdx])}${plainListLink(oppBcpLinks[opIdx])}</td>`;
+    const oppLabel = `<td class="matrix-name">${esc(op)}${plainFactionTag(oppFactions[opIdx])}${plainDispositionTag(oppDispositions[opIdx])}${plainListLink(oppBcpLinks[opIdx])}</td>`;
     const cells = remainingPlayers.map(p=>{
       const myIdx = myLinked.players ? myLinked.players.indexOf(p) : -1;
       const ratings = (myIdx>=0 && myLinked.teamMatchupRatings && myLinked.teamMatchupRatings[myIdx]) || {};
@@ -1811,8 +1816,9 @@ function eventOpponentPreviewHTML(myTeam, poolOpp, remainingPlayers, highlight, 
   const headerCells = remainingPlayers.map(p=>{
     const myIdx = myTeam.players.indexOf(p);
     const faction = myIdx>=0 ? myTeam.factions[myIdx] : '';
+    const disposition = myIdx>=0 && myTeam.dispositions ? myTeam.dispositions[myIdx] : '';
     const isHighlighted = highlightCol && p === highlightCol;
-    return `<th class="${isHighlighted ? 'col-highlight' : ''}">${esc(p)}${plainFactionTag(faction)}</th>`;
+    return `<th class="${isHighlighted ? 'col-highlight' : ''}">${esc(p)}${plainFactionTag(faction)}${plainDispositionTag(disposition)}</th>`;
   }).join('');
   const oppIdxs = poolOpp.players.map((p,i)=>i).filter(i=> !remainingOppPlayers || remainingOppPlayers.includes(poolOpp.players[i]));
   if (!oppIdxs.length){
@@ -1820,7 +1826,7 @@ function eventOpponentPreviewHTML(myTeam, poolOpp, remainingPlayers, highlight, 
   }
   const rows = oppIdxs.map((opIdx)=>{
     const op = poolOpp.players[opIdx];
-    const oppLabel = `<td class="matrix-name">${esc(op)}${plainFactionTag(poolOpp.factions[opIdx])}${plainListLink(poolOpp.bcpLinks[opIdx])}</td>`;
+    const oppLabel = `<td class="matrix-name">${esc(op)}${plainFactionTag(poolOpp.factions[opIdx])}${plainDispositionTag(poolOpp.dispositions&&poolOpp.dispositions[opIdx])}${plainListLink(poolOpp.bcpLinks[opIdx])}</td>`;
     const cells = remainingPlayers.map(p=>{
       const myIdx = myTeam.players.indexOf(p);
       const ratings = (myIdx>=0 && myTeam.teamMatchupRatings && myTeam.teamMatchupRatings[myIdx]) || {};
