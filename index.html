@@ -777,29 +777,54 @@ function parseBcpRosterHtml(htmlText){
     const sectionEnd = (teamIdx+1 < captainIdxs.length) ? captainIdxs[teamIdx+1]-1 : items.length;
     const players = [];
     let cur = null;
+    let awaitingInfo = false; // true right after starting a new player, before their faction/disposition line (if any) has been consumed
     for (let i=capIdx+1; i<sectionEnd; i++){
       const it = items[i];
       if (it.type === 'link'){
         if (cur) cur.listLink = 'https://www.bestcoastpairings.com' + it.href;
+        awaitingInfo = false;
         continue;
       }
-      const dashIdx = it.text.lastIndexOf(' - ');
-      let matchedDisposition = null;
-      if (dashIdx >= 0){
-        const tail = it.text.slice(dashIdx+3).trim().toLowerCase();
-        const dIdx = dispositionsLower.indexOf(tail);
-        if (dIdx >= 0) matchedDisposition = DISPOSITIONS[dIdx];
+      if (awaitingInfo && cur){
+        // this paragraph belongs to the player we just started — whatever it says,
+        // it is NEVER a new player's name (that would only appear after this player's link)
+        let matchedDisposition = null;
+        let factionPart = '';
+        const dashIdx = it.text.lastIndexOf(' - ');
+        if (dashIdx >= 0){
+          // "Faction - Disposition"
+          const tail = it.text.slice(dashIdx+3).trim().toLowerCase();
+          const dIdx = dispositionsLower.indexOf(tail);
+          if (dIdx >= 0){ matchedDisposition = DISPOSITIONS[dIdx]; factionPart = it.text.slice(0, dashIdx).trim(); }
+        }
+        if (!matchedDisposition && it.text.startsWith('- ')){
+          // blank faction — trim() already ate the leading space, leaving "- Disposition"
+          const tail = it.text.slice(2).trim().toLowerCase();
+          const dIdx = dispositionsLower.indexOf(tail);
+          if (dIdx >= 0) matchedDisposition = DISPOSITIONS[dIdx];
+        }
+        if (!matchedDisposition){
+          // bare disposition with no dash at all
+          const wholeLower = it.text.trim().toLowerCase();
+          const wholeDispIdx = dispositionsLower.indexOf(wholeLower);
+          if (wholeDispIdx >= 0) matchedDisposition = DISPOSITIONS[wholeDispIdx];
+        }
+        if (matchedDisposition){
+          cur.faction = factionPart;
+          cur.disposition = matchedDisposition;
+        } else {
+          // no disposition match anywhere in the line — treat the whole thing as a faction-only line
+          cur.faction = it.text.trim();
+        }
+        awaitingInfo = false;
+        continue;
       }
-      if (matchedDisposition && cur){
-        cur.faction = it.text.slice(0, dashIdx).trim();
-        cur.disposition = matchedDisposition;
-      } else {
-        let name = it.text;
-        const clubDash = name.lastIndexOf(' - ');
-        if (clubDash >= 0) name = name.slice(0, clubDash).trim();
-        cur = { name, faction:'', disposition:'', listLink:'' };
-        players.push(cur);
-      }
+      let name = it.text;
+      const clubDash = name.lastIndexOf(' - ');
+      if (clubDash >= 0) name = name.slice(0, clubDash).trim();
+      cur = { name, faction:'', disposition:'', listLink:'' };
+      players.push(cur);
+      awaitingInfo = true;
     }
     return { name: teamName, players };
   });
