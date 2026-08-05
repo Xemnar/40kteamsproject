@@ -27,9 +27,13 @@
   --good:#4c9f70;
   --warn:#e0883d;
   --r1:#e2483c;
+  --r1-5:#e1683c;
   --r2:#e0883d;
+  --r2-5:#e3a843;
   --r3:#e6c84a;
+  --r3-5:#99bb5c;
   --r4:#4caf6e;
+  --r4-5:#4b9fa2;
   --r5:#4a90d6;
   --radius:4px;
   --font-display:'Oswald','Arial Narrow',sans-serif;
@@ -165,32 +169,48 @@ label{display:block;}
 .matchup-matrix th.col-highlight,.matchup-matrix td.col-highlight{background:var(--gold-soft);}
 .matchup-matrix th.col-highlight{color:var(--gold);font-weight:700;border-top:3px solid var(--gold);}
 .matchup-matrix td.cell-highlight{box-shadow:inset 0 0 0 3px var(--gold);}
-.matchup-matrix select{width:52px;padding:4px 2px;font-size:12px;background:var(--panel-alt);border:1px solid var(--line);color:var(--text);border-radius:3px;font-weight:600;}
+.matchup-matrix select{width:58px;padding:4px 2px;font-size:12px;background:var(--panel-alt);border:1px solid var(--line);color:var(--text);border-radius:3px;font-weight:600;}
 .matchup-matrix select.r1{background:var(--r1);border-color:var(--r1);color:#fff;}
+.matchup-matrix select.r1-5{background:var(--r1-5);border-color:var(--r1-5);color:#fff;}
 .matchup-matrix select.r2{background:var(--r2);border-color:var(--r2);color:#fff;}
+.matchup-matrix select.r2-5{background:var(--r2-5);border-color:var(--r2-5);color:#1a1e29;}
 .matchup-matrix select.r3{background:var(--r3);border-color:var(--r3);color:#1a1e29;}
+.matchup-matrix select.r3-5{background:var(--r3-5);border-color:var(--r3-5);color:#1a1e29;}
 .matchup-matrix select.r4{background:var(--r4);border-color:var(--r4);color:#fff;}
+.matchup-matrix select.r4-5{background:var(--r4-5);border-color:var(--r4-5);color:#fff;}
 .matchup-matrix select.r5{background:var(--r5);border-color:var(--r5);color:#fff;}
 .rating-cell{display:block;width:100%;padding:4px 2px;border-radius:3px;font-weight:700;text-align:center;font-family:var(--font-mono);font-size:12px;}
 .rating-cell.r1{background:var(--r1);color:#fff;}
+.rating-cell.r1-5{background:var(--r1-5);color:#fff;}
 .rating-cell.r2{background:var(--r2);color:#fff;}
+.rating-cell.r2-5{background:var(--r2-5);color:#1a1e29;}
 .rating-cell.r3{background:var(--r3);color:#1a1e29;}
+.rating-cell.r3-5{background:var(--r3-5);color:#1a1e29;}
 .rating-cell.r4{background:var(--r4);color:#fff;}
+.rating-cell.r4-5{background:var(--r4-5);color:#fff;}
 .rating-cell.r5{background:var(--r5);color:#fff;}
 .rating-badge{font-family:var(--font-mono);font-size:10px;letter-spacing:.02em;}
 .rating-badge.r1{color:var(--r1);}
+.rating-badge.r1-5{color:var(--r1-5);}
 .rating-badge.r2{color:var(--r2);}
+.rating-badge.r2-5{color:var(--r2-5);}
 .rating-badge.r3{color:var(--r3);}
+.rating-badge.r3-5{color:var(--r3-5);}
 .rating-badge.r4{color:var(--r4);}
+.rating-badge.r4-5{color:var(--r4-5);}
 .rating-badge.r5{color:var(--r5);}
 .rating-key{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line);}
 .rating-key-row{display:flex;flex-wrap:wrap;gap:14px;margin-top:6px;}
 .rating-key-item{display:flex;align-items:center;gap:6px;font-size:12px;}
 .rating-swatch{width:12px;height:12px;border-radius:2px;display:inline-block;flex-shrink:0;}
 .rating-swatch.r1{background:var(--r1);}
+.rating-swatch.r1-5{background:var(--r1-5);}
 .rating-swatch.r2{background:var(--r2);}
+.rating-swatch.r2-5{background:var(--r2-5);}
 .rating-swatch.r3{background:var(--r3);}
+.rating-swatch.r3-5{background:var(--r3-5);}
 .rating-swatch.r4{background:var(--r4);}
+.rating-swatch.r4-5{background:var(--r4-5);}
 .rating-swatch.r5{background:var(--r5);}
 .radio-opt{display:flex;align-items:center;gap:6px;font-size:14px;}
 
@@ -890,6 +910,10 @@ function getBcpLink(side, playerName){
   const idx = team.players.indexOf(playerName);
   return (idx>=0 && team.bcpLinks) ? (team.bcpLinks[idx] || '') : '';
 }
+const RATING_OPTIONS = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
+function ratingClass(val){
+  return val==null || val==='' ? '' : 'r'+String(val).replace('.','-');
+}
 function getMatchupRating(side, playerName, opponentDisposition){
   if (!opponentDisposition) return null;
   const team = (side==='a' || side==='A') ? state.teamA : state.teamB;
@@ -1108,9 +1132,9 @@ function eventOpponentMatrixBlockHTML(myTeam, opp){
       const ratings = (myTeam.teamMatchupRatings && myTeam.teamMatchupRatings[i]) || {};
       const key = `${opp.name}::${op}`;
       const val = ratings[key]!=null ? ratings[key] : '';
-      return `<td><select class="${val!==''?'r'+val:''}" data-action="set-event-team-matchup" data-idx="${i}" data-opponent="${esc(key)}">
+      return `<td><select class="${ratingClass(val)}" data-action="set-event-team-matchup" data-idx="${i}" data-opponent="${esc(key)}">
         <option value=""${val===''?' selected':''}>—</option>
-        ${[1,2,3,4,5].map(n=>`<option value="${n}" ${String(val)===String(n)?'selected':''}>${n}</option>`).join('')}
+        ${RATING_OPTIONS.map(n=>`<option value="${n}" ${String(val)===String(n)?'selected':''}>${n}</option>`).join('')}
       </select></td>`;
     }).join('');
     return `<tr>${oppLabel}${ratingCells}</tr>`;
@@ -1510,9 +1534,9 @@ function opponentMatrixBlockHTML(team, o){
       const ratings = (team.teamMatchupRatings && team.teamMatchupRatings[i]) || {};
       const key = `${o.code}::${op}`;
       const val = ratings[key]!=null ? ratings[key] : '';
-      return `<td><select class="${val!==''?'r'+val:''}" data-action="set-team-matchup" data-idx="${i}" data-opponent="${esc(key)}">
+      return `<td><select class="${ratingClass(val)}" data-action="set-team-matchup" data-idx="${i}" data-opponent="${esc(key)}">
         <option value=""${val===''?' selected':''}>—</option>
-        ${[1,2,3,4,5].map(n=>`<option value="${n}" ${String(val)===String(n)?'selected':''}>${n}</option>`).join('')}
+        ${RATING_OPTIONS.map(n=>`<option value="${n}" ${String(val)===String(n)?'selected':''}>${n}</option>`).join('')}
       </select></td>`;
     }).join('');
     return `<tr>${oppLabel}${ratingCells}</tr>`;
@@ -1599,9 +1623,9 @@ function matchupMatrixHTML(side, team){
     const cells = team.players.map((p,i)=>{
       const ratings = team.matchupRatings[i] || {};
       const val = (ratings[d]!=null) ? ratings[d] : '';
-      return `<td><select class="${val!==''?'r'+val:''}" data-action="set-matchup" data-side="${side}" data-idx="${i}" data-disp="${esc(d)}">
+      return `<td><select class="${ratingClass(val)}" data-action="set-matchup" data-side="${side}" data-idx="${i}" data-disp="${esc(d)}">
         <option value=""${val===''?' selected':''}>—</option>
-        ${[1,2,3,4,5].map(n=>`<option value="${n}" ${String(val)===String(n)?'selected':''}>${n}</option>`).join('')}
+        ${RATING_OPTIONS.map(n=>`<option value="${n}" ${String(val)===String(n)?'selected':''}>${n}</option>`).join('')}
       </select></td>`;
     }).join('');
     return `<tr><td class="matrix-name">${esc(d)}</td>${cells}</tr>`;
@@ -1612,11 +1636,11 @@ function matchupMatrixHTML(side, team){
   </table></div>`;
 }
 function ratingKeyHTML(){
-  const rows = [[1,'0–4'],[2,'5–8'],[3,'9–11'],[4,'12–15'],[5,'16–20']];
+  const rows = [[1,'0–4'],[1.5,''],[2,'5–8'],[2.5,''],[3,'9–11'],[3.5,''],[4,'12–15'],[4.5,''],[5,'16–20']];
   return `<div class="rating-key">
     <span class="eyebrow">RATING KEY — EXPECTED BATTLE-POINT DIFFERENTIAL</span>
     <div class="rating-key-row">
-      ${rows.map(([n,range])=>`<span class="rating-key-item"><span class="rating-swatch r${n}"></span>${n} <span class="dim">(${range} pt diff)</span></span>`).join('')}
+      ${rows.map(([n,range])=>`<span class="rating-key-item"><span class="rating-swatch ${ratingClass(n)}"></span>${n}${range?` <span class="dim">(${range} pt diff)</span>`:''}</span>`).join('')}
     </div>
   </div>`;
 }
@@ -1671,7 +1695,7 @@ function matchupMatrixReadOnlyHTML(side, team, playersOverride, highlightPlayer)
     const cells = players.map(p=>{
       const val = getMatchupRating(side, p, d);
       const isHighlighted = highlightPlayer && p === highlightPlayer;
-      return `<td class="${isHighlighted ? 'col-highlight' : ''}">${val!=null ? `<span class="rating-cell r${val}">${val}</span>` : '<span class="dim">—</span>'}</td>`;
+      return `<td class="${isHighlighted ? 'col-highlight' : ''}">${val!=null ? `<span class="rating-cell ${ratingClass(val)}">${val}</span>` : '<span class="dim">—</span>'}</td>`;
     }).join('');
     return `<tr><td class="matrix-name">${esc(d)}</td>${cells}</tr>`;
   }).join('');
@@ -1801,7 +1825,7 @@ function ourOpponentSpecificPreviewHTML(myLinked, oppCode, oppTeamName, remainin
       const isColHighlighted = highlightCol && p === highlightCol;
       const isCellHighlighted = highlightCell && op === highlightCell.row && highlightCell.cols.includes(p);
       const cls = isCellHighlighted ? 'cell-highlight' : (isColHighlighted ? 'col-highlight' : '');
-      return `<td class="${cls}">${val!=null ? `<span class="rating-cell r${val}">${val}</span>` : '<span class="dim">—</span>'}</td>`;
+      return `<td class="${cls}">${val!=null ? `<span class="rating-cell ${ratingClass(val)}">${val}</span>` : '<span class="dim">—</span>'}</td>`;
     }).join('');
     return `<tr>${oppLabel}${cells}</tr>`;
   }).join('');
@@ -1834,7 +1858,7 @@ function eventOpponentPreviewHTML(myTeam, poolOpp, remainingPlayers, highlight, 
       const isColHighlighted = highlightCol && p === highlightCol;
       const isCellHighlighted = highlightCell && op === highlightCell.row && highlightCell.cols.includes(p);
       const cls = isCellHighlighted ? 'cell-highlight' : (isColHighlighted ? 'col-highlight' : '');
-      return `<td class="${cls}">${val!=null ? `<span class="rating-cell r${val}">${val}</span>` : '<span class="dim">—</span>'}</td>`;
+      return `<td class="${cls}">${val!=null ? `<span class="rating-cell ${ratingClass(val)}">${val}</span>` : '<span class="dim">—</span>'}</td>`;
     }).join('');
     return `<tr>${oppLabel}${cells}</tr>`;
   }).join('');
@@ -3179,7 +3203,7 @@ app.addEventListener('change', async (e)=>{
     const side = el.dataset.side, idx = parseInt(el.dataset.idx), disp = el.dataset.disp;
     const team = side==='p' ? teamProfile : (side==='a' ? state.teamA : state.teamB);
     if (!team.matchupRatings[idx]) team.matchupRatings[idx] = {};
-    team.matchupRatings[idx][disp] = el.value ? parseInt(el.value) : null;
+    team.matchupRatings[idx][disp] = el.value ? parseFloat(el.value) : null;
     if (side==='p') scheduleSaveProfile(); else scheduleSave();
     route();
     return;
@@ -3189,7 +3213,7 @@ app.addEventListener('change', async (e)=>{
     const idx = parseInt(el.dataset.idx), opponentCode = el.dataset.opponent;
     if (!teamProfile.teamMatchupRatings) teamProfile.teamMatchupRatings = blankMatchupRatings();
     if (!teamProfile.teamMatchupRatings[idx]) teamProfile.teamMatchupRatings[idx] = {};
-    teamProfile.teamMatchupRatings[idx][opponentCode] = el.value ? parseInt(el.value) : null;
+    teamProfile.teamMatchupRatings[idx][opponentCode] = el.value ? parseFloat(el.value) : null;
     scheduleSaveProfile();
     route();
     return;
@@ -3199,7 +3223,7 @@ app.addEventListener('change', async (e)=>{
     const idx = parseInt(el.dataset.idx), key = el.dataset.opponent;
     if (!state.teamA.teamMatchupRatings) state.teamA.teamMatchupRatings = blankMatchupRatings();
     if (!state.teamA.teamMatchupRatings[idx]) state.teamA.teamMatchupRatings[idx] = {};
-    state.teamA.teamMatchupRatings[idx][key] = el.value ? parseInt(el.value) : null;
+    state.teamA.teamMatchupRatings[idx][key] = el.value ? parseFloat(el.value) : null;
     scheduleSave();
     route();
     return;
