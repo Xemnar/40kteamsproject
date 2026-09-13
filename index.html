@@ -391,88 +391,11 @@ button.atk-card:hover .tap-hint{color:var(--gold);}
 </head>
 <body>
 <div id="app">Loading…</div>
-<!-- Firebase (Realtime Database) — used for persistence when this file runs outside Claude.ai -->
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
 <script>
 /* =========================================================
-   8-MAN MATCHUP CONSOLE — standalone / self-hosted build
+   8-MAN MATCHUP CONSOLE
    Accept/Refuse team pairing draft for 8-a-side 40k events
    ========================================================= */
-
-/* =========================================================
-   FIREBASE — already configured for the k-teams-project Firebase
-   project. If you ever need to point this at a different Firebase
-   project, replace the object below with that project's config
-   (Firebase console → Project settings → Your apps → the </> icon).
-
-   Security rules note: anyone who has your databaseURL can read/
-   write it — same trust model as the event/team codes (the code
-   is the only gate), now paired with the app's registration/login
-   screen. Your Realtime Database is currently in "test mode,"
-   which stops accepting writes after 30 days unless you update
-   the rules. When you get to it, in Realtime Database → Rules, use:
-     { "rules": { ".read": true, ".write": true } }
-   to remove that expiry — no rush, it works fine as-is until then.
-   ========================================================= */
-const firebaseConfig = {
-  apiKey: "AIzaSyDvHxbiPr8tZEar0FJfqKt0_A41rxrguz4",
-  authDomain: "k-teams-project.firebaseapp.com",
-  databaseURL: "https://k-teams-project-default-rtdb.firebaseio.com",
-  projectId: "k-teams-project",
-  storageBucket: "k-teams-project.firebasestorage.app",
-  messagingSenderId: "1058043714195",
-  appId: "1:1058043714195:web:0bf8b9e6937fc213af4b66",
-  measurementId: "G-WX4F3JNWFT"
-};
-
-let firebaseReady = false;
-let fbDb = null;
-try {
-  if (firebaseConfig.apiKey && firebaseConfig.apiKey !== 'YOUR_API_KEY' && typeof firebase !== 'undefined'){
-    firebase.initializeApp(firebaseConfig);
-    fbDb = firebase.database();
-    firebaseReady = true;
-  }
-} catch(e){ console.error('Firebase init failed:', e); firebaseReady = false; }
-
-function sanitizeKey(key){
-  // Realtime Database paths can't contain . $ # [ ] or /
-  return String(key).replace(/[.$#\[\]/]/g, '_');
-}
-
-// Drop-in replacement for the window.storage API this app was originally built
-// against: shared:true goes to Firebase (visible to your whole team), shared:false
-// stays in this browser's own localStorage (per-device, e.g. "last code I used").
-const storage = {
-  async get(key, shared){
-    if (shared === false){
-      const raw = localStorage.getItem(key);
-      return raw != null ? { key, value: raw, shared } : null;
-    }
-    if (!firebaseReady) throw new Error('Firebase is not configured yet — see firebaseConfig at the top of the script');
-    const snap = await fbDb.ref(sanitizeKey(key)).once('value');
-    return snap.exists() ? { key, value: snap.val(), shared } : null;
-  },
-  async set(key, value, shared){
-    if (shared === false){
-      localStorage.setItem(key, value);
-      return { key, value, shared };
-    }
-    if (!firebaseReady) throw new Error('Firebase is not configured yet — see firebaseConfig at the top of the script');
-    await fbDb.ref(sanitizeKey(key)).set(value);
-    return { key, value, shared };
-  },
-  async delete(key, shared){
-    if (shared === false){
-      localStorage.removeItem(key);
-      return { key, deleted: true, shared };
-    }
-    if (!firebaseReady) throw new Error('Firebase is not configured yet — see firebaseConfig at the top of the script');
-    await fbDb.ref(sanitizeKey(key)).remove();
-    return { key, deleted: true, shared };
-  }
-};
 
 let STORAGE_PREFIX = 'wtc8-event-';
 let LAST_CODE_KEY = 'wtc8-last-code';
@@ -511,6 +434,7 @@ const UNDO_CHECKPOINT_ACTIONS = new Set([
   'next-round', 'next-round-with-opponent'
 ]);
 let authView = 'login'; // 'login' | 'register' | 'admin-login'
+let hubView = null; // null = normal hub, 'history' = cross-event team history
 let isAdmin = false;
 let adminResetSlug = null; // which team's password-reset form is open, if any
 let adminResetDone = null; // name of the team whose password was just reset, for the confirmation message
@@ -537,9 +461,9 @@ function esc(str){
 function setSync(status){
   const el = document.getElementById('sync-dot');
   if (!el) return;
-  el.className = 'sync-dot' + (status==='busy' ? ' busy' : status==='err' ? ' err' : '');
+  el.className = 'sync-dot' + (status==='busy' ? ' busy' : (status==='err'||status==='offline') ? ' err' : '');
   const lbl = document.getElementById('sync-label');
-  if (lbl) lbl.textContent = status==='busy' ? 'saving…' : status==='err' ? 'save failed' : 'synced';
+  if (lbl) lbl.textContent = status==='busy' ? 'saving…' : status==='offline' ? 'offline — will retry' : status==='err' ? 'save failed' : 'synced';
 }
 
 /* ---------------- auth: per-team registration & namespaced storage ---------------- */
@@ -565,27 +489,27 @@ function applyNamespace(slug){
 }
 async function loadAuthRegistry(){
   try {
-    const res = await storage.get(AUTH_REGISTRY_KEY, true);
+    const res = await window.storage.get(AUTH_REGISTRY_KEY, true);
     authRegistryCache = (res && res.value) ? JSON.parse(res.value) : { teams: [] };
   } catch(e){ authRegistryCache = { teams: [] }; }
   return authRegistryCache;
 }
 async function saveAuthRegistry(reg){
-  await storage.set(AUTH_REGISTRY_KEY, JSON.stringify(reg), true);
+  await window.storage.set(AUTH_REGISTRY_KEY, JSON.stringify(reg), true);
 }
 async function adminDeleteTeam(slug){
   let idx = { teams: [], events: [] };
   try {
-    const res = await storage.get(`${slug}-wtc8-index`, true);
+    const res = await window.storage.get(`${slug}-wtc8-index`, true);
     if (res && res.value) idx = JSON.parse(res.value);
   } catch(e){ /* no index, nothing to enumerate */ }
   for (const ev of (idx.events||[])){
-    try { await storage.delete(`${slug}-wtc8-event-${ev.code}`, true); } catch(e){ /* keep going */ }
+    try { await window.storage.delete(`${slug}-wtc8-event-${ev.code}`, true); } catch(e){ /* keep going */ }
   }
   for (const t of (idx.teams||[])){
-    try { await storage.delete(`${slug}-wtc8-team-${t.code}`, true); } catch(e){ /* keep going */ }
+    try { await window.storage.delete(`${slug}-wtc8-team-${t.code}`, true); } catch(e){ /* keep going */ }
   }
-  try { await storage.delete(`${slug}-wtc8-index`, true); } catch(e){ /* non-fatal */ }
+  try { await window.storage.delete(`${slug}-wtc8-index`, true); } catch(e){ /* non-fatal */ }
   authRegistryCache.teams = (authRegistryCache.teams||[]).filter(t=>t.slug!==slug);
   await saveAuthRegistry(authRegistryCache);
 }
@@ -609,7 +533,7 @@ function clearAuthed(){
 /* ---------------- shared index (list of all teams & events) ---------------- */
 async function loadIndex(){
   try {
-    const res = await storage.get(INDEX_KEY, true);
+    const res = await window.storage.get(INDEX_KEY, true);
     if (res && res.value) return JSON.parse(res.value);
   } catch(e){ /* none yet */ }
   return { teams: [], events: [] };
@@ -623,7 +547,7 @@ async function upsertIndexEntry(kind, entry){
     if (!idx[kind]) idx[kind] = [];
     const i = idx[kind].findIndex(x=>x.code===entry.code);
     if (i>=0) idx[kind][i] = entry; else idx[kind].push(entry);
-    await storage.set(INDEX_KEY, JSON.stringify(idx), true);
+    await window.storage.set(INDEX_KEY, JSON.stringify(idx), true);
     indexCache = idx;
   } catch(e){ /* non-fatal */ }
 }
@@ -631,14 +555,14 @@ async function removeIndexEntry(kind, code){
   try {
     const idx = await loadIndex();
     idx[kind] = (idx[kind]||[]).filter(x=>x.code!==code);
-    await storage.set(INDEX_KEY, JSON.stringify(idx), true);
+    await window.storage.set(INDEX_KEY, JSON.stringify(idx), true);
     indexCache = idx;
   } catch(e){ /* non-fatal */ }
 }
 
 /* ---------------- storage ---------------- */
 async function persistLastCode(){
-  try { await storage.set(LAST_CODE_KEY, JSON.stringify({code: currentCode}), false); }
+  try { await window.storage.set(LAST_CODE_KEY, JSON.stringify({code: currentCode}), false); }
   catch(e){ /* non-fatal */ }
 }
 let remoteApplyBlocked = false; // true while a local edit hasn't finished saving yet
@@ -649,6 +573,17 @@ let viewingSnapshotRound = null; // round number currently shown in the history 
 let viewingSnapshotData = null; // the loaded snapshot state for that round
 let roundIndexCache = []; // list of round numbers that have a saved snapshot, refreshed when the history view opens
 
+let offlineRetryTimer = null;
+function localCacheKey(code){ return `${STORAGE_PREFIX}${code}-localcache`; }
+function eventIndexEntry(){
+  const rec = eventRecord();
+  return {
+    code: currentCode, name: state.name, teamA: state.teamA.name, teamB: state.teamB.name,
+    record: { wins: rec.wins, losses: rec.losses, draws: rec.draws },
+    roundResults: rec.roundSummaries.map(r=>({ oppName: r.oppName, result: r.result })),
+    eventComplete: !!state.eventComplete
+  };
+}
 function scheduleSave(){
   clearTimeout(saveTimer);
   remoteApplyBlocked = true;
@@ -657,20 +592,25 @@ function scheduleSave(){
 }
 async function saveState(){
   if (!state || !currentCode) return;
+  const json = JSON.stringify(state);
+  try { localStorage.setItem(localCacheKey(currentCode), json); } catch(e){ /* non-fatal — best-effort local backup */ }
   try {
-    const json = JSON.stringify(state);
-    await storage.set(STORAGE_PREFIX+currentCode, json, true);
+    await window.storage.set(STORAGE_PREFIX+currentCode, json, true);
     lastWrittenJson = json;
     setSync('ok');
-    await upsertIndexEntry('events', { code: currentCode, name: state.name, teamA: state.teamA.name, teamB: state.teamB.name });
-  } catch(e){ setSync('err'); }
+    await upsertIndexEntry('events', eventIndexEntry());
+    if (offlineRetryTimer){ clearInterval(offlineRetryTimer); offlineRetryTimer = null; }
+  } catch(e){
+    setSync('offline');
+    if (!offlineRetryTimer){ offlineRetryTimer = setInterval(()=>{ saveState(); }, 5000); }
+  }
   remoteApplyBlocked = false;
   // any remote value queued while we were mid-edit is now stale — our write just became
   // the newest version on the server, and applying that older snapshot would silently
   // undo what we just saved. We'll pick up further remote changes on the next live update.
   pendingRemoteValue = null;
 }
-function applyRemoteUpdate(json){
+async function applyRemoteUpdate(json){
   if (json === lastWrittenJson) return; // just an echo of our own write
   if (remoteApplyBlocked){ pendingRemoteValue = json; return; } // don't clobber an unsaved local edit — catch up once it lands
   if (!currentCode || mode !== 'event') return; // not currently viewing an event
@@ -678,6 +618,7 @@ function applyRemoteUpdate(json){
     state = JSON.parse(json);
     migrateState();
     lastWrittenJson = json;
+    await mergeLatestRatings();
     route();
   } catch(e){ /* ignore a malformed push */ }
 }
@@ -697,52 +638,95 @@ function stopLiveSync(){
 async function saveRoundSnapshot(roundNumber){
   if (!currentCode || !state) return;
   try {
-    await storage.set(`${STORAGE_PREFIX}${currentCode}-round-${roundNumber}`, JSON.stringify(state), true);
+    await window.storage.set(`${STORAGE_PREFIX}${currentCode}-round-${roundNumber}`, JSON.stringify(state), true);
     let idx = [];
     try {
-      const res = await storage.get(`${STORAGE_PREFIX}${currentCode}-round-index`, true);
+      const res = await window.storage.get(`${STORAGE_PREFIX}${currentCode}-round-index`, true);
       if (res && res.value) idx = JSON.parse(res.value);
     } catch(e){ /* no index yet */ }
     if (!idx.includes(roundNumber)){
       idx.push(roundNumber);
       idx.sort((a,b)=>a-b);
-      await storage.set(`${STORAGE_PREFIX}${currentCode}-round-index`, JSON.stringify(idx), true);
+      await window.storage.set(`${STORAGE_PREFIX}${currentCode}-round-index`, JSON.stringify(idx), true);
     }
   } catch(e){ /* non-fatal — the live event document is still the primary record */ }
 }
 async function loadRoundIndex(){
   if (!currentCode) return [];
   try {
-    const res = await storage.get(`${STORAGE_PREFIX}${currentCode}-round-index`, true);
+    const res = await window.storage.get(`${STORAGE_PREFIX}${currentCode}-round-index`, true);
     return (res && res.value) ? JSON.parse(res.value) : [];
   } catch(e){ return []; }
 }
 async function loadRoundSnapshot(roundNumber){
   if (!currentCode) return null;
   try {
-    const res = await storage.get(`${STORAGE_PREFIX}${currentCode}-round-${roundNumber}`, true);
+    const res = await window.storage.get(`${STORAGE_PREFIX}${currentCode}-round-${roundNumber}`, true);
     return (res && res.value) ? JSON.parse(res.value) : null;
   } catch(e){ return null; }
+}
+// Matchup ratings get their own storage key per event, separate from the main event
+// document, so two people rating different cells at nearly the same moment can't
+// overwrite each other — each save reads the latest ratings, patches in just the one
+// changed cell, and writes back, rather than saving the whole event as one blob.
+function ratingsKey(code){ return `${STORAGE_PREFIX}${code}-genratings`; }
+function teamRatingsKey(code){ return `${STORAGE_PREFIX}${code}-teamratings`; }
+async function saveRatingCell(key, idx, field, value){
+  let arr = [];
+  try {
+    const res = await window.storage.get(key, true);
+    if (res && res.value) arr = JSON.parse(res.value);
+  } catch(e){ /* start fresh */ }
+  while (arr.length <= idx) arr.push({});
+  if (!arr[idx]) arr[idx] = {};
+  arr[idx][field] = value;
+  await window.storage.set(key, JSON.stringify(arr), true);
+  return arr;
+}
+async function mergeLatestRatings(){
+  if (!currentCode || !state || !state.teamA) return;
+  try {
+    const res = await window.storage.get(ratingsKey(currentCode), true);
+    if (res && res.value) state.teamA.matchupRatings = JSON.parse(res.value);
+  } catch(e){ /* keep whatever the main event document already has */ }
+  try {
+    const res2 = await window.storage.get(teamRatingsKey(currentCode), true);
+    if (res2 && res2.value) state.teamA.teamMatchupRatings = JSON.parse(res2.value);
+  } catch(e){ /* keep whatever the main event document already has */ }
 }
 async function tryLoad(code){
   currentCode = code.trim().toUpperCase();
   try {
-    const res = await storage.get(STORAGE_PREFIX+currentCode, true);
+    const res = await window.storage.get(STORAGE_PREFIX+currentCode, true);
     if (res && res.value){
       state = JSON.parse(res.value); migrateState();
       lastWrittenJson = res.value;
-      await upsertIndexEntry('events', { code: currentCode, name: state.name, teamA: state.teamA.name, teamB: state.teamB.name });
+      try { localStorage.setItem(localCacheKey(currentCode), res.value); } catch(e){ /* non-fatal */ }
+      await mergeLatestRatings();
+      await upsertIndexEntry('events', eventIndexEntry());
       await refreshLinkedProfiles();
       startLiveSync(currentCode);
       return true;
     }
-  } catch(e){ /* not found yet */ }
+  } catch(e){
+    // Firebase unreachable (offline, dropped venue wifi, etc.) — fall back to
+    // whatever we last cached locally for this event, so the app still works
+    try {
+      const cached = localStorage.getItem(localCacheKey(currentCode));
+      if (cached){
+        state = JSON.parse(cached); migrateState();
+        lastWrittenJson = null; // this is our own cache, not a confirmed server value
+        setSync('offline');
+        return true;
+      }
+    } catch(e2){ /* no local cache either */ }
+  }
   return false;
 }
 
 /* ---------------- team profile storage ---------------- */
 async function persistLastTeamCode(){
-  try { await storage.set(LAST_TEAM_CODE_KEY, JSON.stringify({code: teamProfileCode}), false); }
+  try { await window.storage.set(LAST_TEAM_CODE_KEY, JSON.stringify({code: teamProfileCode}), false); }
   catch(e){ /* non-fatal */ }
 }
 function scheduleSaveProfile(){
@@ -753,7 +737,7 @@ function scheduleSaveProfile(){
 async function saveTeamProfile(){
   if (!teamProfile || !teamProfileCode) return;
   try {
-    await storage.set(TEAM_PREFIX+teamProfileCode, JSON.stringify(teamProfile), true);
+    await window.storage.set(TEAM_PREFIX+teamProfileCode, JSON.stringify(teamProfile), true);
     setSync('ok');
     await upsertIndexEntry('teams', { code: teamProfileCode, name: teamProfile.name });
   } catch(e){ setSync('err'); }
@@ -761,7 +745,7 @@ async function saveTeamProfile(){
 async function tryLoadTeamProfile(code){
   teamProfileCode = code.trim().toUpperCase();
   try {
-    const res = await storage.get(TEAM_PREFIX+teamProfileCode, true);
+    const res = await window.storage.get(TEAM_PREFIX+teamProfileCode, true);
     if (res && res.value){
       teamProfile = JSON.parse(res.value); migrateTeamProfile();
       await upsertIndexEntry('teams', { code: teamProfileCode, name: teamProfile.name });
@@ -796,6 +780,7 @@ function migrateState(){
   // backfill fields for events saved before they existed, so old saves keep working
   if (!state) return;
   if (state.name === undefined) state.name = '';
+  if (state.eventComplete === undefined) state.eventComplete = false;
   if (!state.opponentTeams) state.opponentTeams = [];
   if (!state.workspace || !state.workspace.notes) state.workspace = { notes: Array(8).fill(''), lists: Array.from({length:8}, ()=>[]) };
   if (!state.workspace.lists) state.workspace.lists = Array.from({length:8}, ()=>[]);
@@ -938,7 +923,7 @@ async function refreshLinkedProfiles(){
   const codes = [state.teamA && state.teamA.linkedProfileCode, state.teamB && state.teamB.linkedProfileCode].filter(Boolean);
   for (const code of codes){
     try {
-      const res = await storage.get(TEAM_PREFIX+code, true);
+      const res = await window.storage.get(TEAM_PREFIX+code, true);
       if (res && res.value) linkedProfileCache[code] = JSON.parse(res.value);
     } catch(e){ /* keep whatever was cached before, if anything */ }
   }
@@ -947,7 +932,7 @@ async function refreshTrackedOpponentProfiles(){
   if (!teamProfile || !teamProfile.trackedOpponents) return;
   for (const code of teamProfile.trackedOpponents){
     try {
-      const res = await storage.get(TEAM_PREFIX+code, true);
+      const res = await window.storage.get(TEAM_PREFIX+code, true);
       if (res && res.value) linkedProfileCache[code] = JSON.parse(res.value);
     } catch(e){ /* keep whatever was cached before, if anything */ }
   }
@@ -1098,6 +1083,7 @@ function newEvent(code){
     tables: Array.from({length:8}, (_,i)=>({ id:i+1, label:`Table ${i+1}` })),
     scoringMode: 'wtc',
     setupComplete: false,
+    eventComplete: false,
     currentRound: 0,
     rounds: [ newRound(1, blankPlayers('Player'), blankPlayers('Player')) ]
   };
@@ -1171,16 +1157,101 @@ function eventStandings(){
   });
   return { ta, tb, roundsWonA, roundsWonB, roundsDrawn, playedRounds };
 }
+function eventRecord(){
+  let myTotal = 0, oppTotal = 0, wins = 0, losses = 0, draws = 0, playedRounds = 0;
+  const roundSummaries = [];
+  state.rounds.forEach(r=>{
+    if (r.status !== 'complete') return;
+    const t = roundTotals(r);
+    myTotal += t.ta; oppTotal += t.tb; playedRounds++;
+    let result = 'Draw';
+    if (t.ta > t.tb){ wins++; result = 'Win'; }
+    else if (t.tb > t.ta){ losses++; result = 'Loss'; }
+    else draws++;
+    roundSummaries.push({ number: r.number, oppName: r.oppName || (state.teamB ? state.teamB.name : 'Opponent'), myScore: t.ta, oppScore: t.tb, result });
+  });
+  return { myTotal, oppTotal, wins, losses, draws, playedRounds, roundSummaries };
+}
+function buildRosterExportText(){
+  const lines = [];
+  lines.push(`${state.name || state.code} — Roster & Matchup Ratings`);
+  lines.push(`Team: ${state.teamA.name}`);
+  lines.push('');
+  lines.push('Roster:');
+  state.teamA.players.forEach((p,i)=>{
+    lines.push(`  ${p} — ${state.teamA.factions[i]||'(no faction)'} — ${state.teamA.dispositions[i]||'(no disposition)'}`);
+  });
+  lines.push('');
+  lines.push('Generic disposition ratings (1-5, higher = better matchup):');
+  DISPOSITIONS.forEach(d=>{
+    const row = state.teamA.players.map((p,i)=>{
+      const r = (state.teamA.matchupRatings[i]||{})[d];
+      return `${p}:${r!=null?r:'-'}`;
+    }).join('  ');
+    lines.push(`  ${d}: ${row}`);
+  });
+  if (state.opponentTeams && state.opponentTeams.length){
+    lines.push('');
+    lines.push(`Opponent pool (${state.opponentTeams.length} teams):`);
+    state.opponentTeams.forEach(o=>{
+      lines.push(`  ${o.name}:`);
+      o.players.forEach((p,i)=>{
+        lines.push(`    ${p} — ${(o.factions&&o.factions[i])||'(no faction)'} — ${(o.dispositions&&o.dispositions[i])||'(no disposition)'}`);
+      });
+    });
+  }
+  return lines.join('\n');
+}
+function downloadTextFile(filename, text){
+  const blob = new Blob([text], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function finalResultsHTML(){
+  const rec = eventRecord();
+  return `
+  <div class="panel">
+    <div class="panel-title"><h2>Final results</h2><span class="eyebrow">${esc(state.name || state.code)}</span></div>
+    ${state.eventComplete ? `<p class="note" style="color:var(--good);margin-top:0;">✓ This event has been marked complete.</p>` : `<p class="note" style="margin-top:0;">Cumulative results so far — end the event once every round you're playing is done, since events don't all run the same number of rounds.</p>`}
+    <div class="score-banner">
+      <div class="side a"><div class="big-score">${rec.myTotal}</div><div class="who">${esc(state.teamA.name).toUpperCase()}</div></div>
+      <div class="side b"><div class="big-score">${rec.oppTotal}</div><div class="who">OPPONENTS (COMBINED)</div></div>
+    </div>
+    <div class="standings-row"><span>Record</span><span class="mono">${rec.wins}W – ${rec.losses}L – ${rec.draws}D</span></div>
+    <div class="standings-row"><span>Rounds played</span><span class="mono">${rec.playedRounds}</span></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><h3>Round by round</h3></div>
+    ${rec.roundSummaries.length ? rec.roundSummaries.map(r=>`
+      <div class="standings-row">
+        <span style="flex:1;">Round ${r.number} vs ${esc(r.oppName)}</span>
+        <span class="mono" style="width:70px;text-align:center;">${r.myScore}–${r.oppScore}</span>
+        <span class="mono dim" style="width:50px;text-align:right;">${r.result}</span>
+      </div>
+    `).join('') : '<p class="note" style="margin-top:0;">No rounds completed yet.</p>'}
+  </div>
+  <div class="btn-row">
+    ${state.eventComplete
+      ? `<button class="btn-ghost" data-action="reopen-event">Reopen event</button>`
+      : `<button class="btn btn-primary" data-action="end-event">🏁 End event</button>`}
+    <button class="btn-ghost" data-action="toggle-results-view">← back to current round</button>
+  </div>`;
+}
 
 /* ---------------- routing / render ---------------- */
 function route(){
   if (isAdmin){ app.innerHTML = adminPanelHTML(); return; }
   if (!authenticated){ app.innerHTML = passwordGateHTML(); return; }
   if (mode === 'team'){
-    app.innerHTML = teamProfile ? (teamProfileHeaderHTML() + teamProfileBodyHTML()) : landingHTML();
+    app.innerHTML = teamProfile ? (teamProfileHeaderHTML() + teamProfileBodyHTML()) : (hubView === 'history' ? teamHistoryHTML() : landingHTML());
     return;
   }
-  if (!state){ app.innerHTML = landingHTML(); return; }
+  if (!state){ app.innerHTML = hubView === 'history' ? teamHistoryHTML() : landingHTML(); return; }
   if (eventView === 'matchups'){ app.innerHTML = header() + eventMatchupsHTML(); return; }
   if (!state.setupComplete){
     // pre-setup: workspace (roster + import + planning) is the default landing screen;
@@ -1194,16 +1265,25 @@ function route(){
     app.innerHTML = header() + (viewingSnapshotRound ? roundSnapshotDetailHTML() : roundHistoryHTML());
     return;
   }
+  if (eventView === 'results'){ app.innerHTML = header() + finalResultsHTML(); return; }
   const round = curRound();
   if (round.status === 'drafting') app.innerHTML = header() + draftHTML(round);
   else if (round.status === 'scoring') app.innerHTML = header() + scoringHTML(round);
   else app.innerHTML = header() + completeHTML(round);
 }
 
-function eventOpponentMatrixBlockHTML(myTeam, opp){
+function eventOpponentMatrixBlockHTML(myTeam, opp, oppTeamIdx){
   const headerCells = myTeam.players.map((p,i)=>`<th>${esc(p)}${plainFactionTag(myTeam.factions[i])}${plainDispositionTag(myTeam.dispositions&&myTeam.dispositions[i])}${plainListLink(myTeam.bcpLinks[i])}</th>`).join('');
   const rows = opp.players.map((op,opIdx)=>{
-    const oppLabel = `<td class="matrix-name">${esc(op)}${plainFactionTag(opp.factions[opIdx])}${plainDispositionTag(opp.dispositions&&opp.dispositions[opIdx])}${plainListLink(opp.bcpLinks[opIdx])}</td>`;
+    const oppLabel = `<td class="matrix-name">
+      <div>${esc(op)}</div>
+      <input type="text" data-bind="opponentTeams.${oppTeamIdx}.factions.${opIdx}" value="${esc(opp.factions[opIdx]||'')}" placeholder="Faction" style="width:105px;font-size:10px;padding:2px 4px;margin-top:3px;display:block;">
+      <select data-action="set-disposition" data-side="opp" data-opp-idx="${oppTeamIdx}" data-idx="${opIdx}" style="width:105px;font-size:10px;padding:2px 4px;margin-top:3px;">
+        <option value="">— disposition —</option>
+        ${DISPOSITIONS.map(d=>`<option value="${d}" ${opp.dispositions&&opp.dispositions[opIdx]===d?'selected':''}>${esc(d)}</option>`).join('')}
+      </select>
+      ${plainListLink(opp.bcpLinks[opIdx])}
+    </td>`;
     const ratingCells = myTeam.players.map((p,i)=>{
       const ratings = (myTeam.teamMatchupRatings && myTeam.teamMatchupRatings[i]) || {};
       const key = `${opp.name}::${op}`;
@@ -1227,7 +1307,11 @@ function eventMatchupsHTML(){
   return `
   <div class="panel">
     <div class="panel-title"><h2>Teams &amp; matrices</h2><span class="eyebrow">${esc(state.name || state.code)}</span></div>
-    <p class="note" style="margin-top:0;">Browse any opponent's roster and adjust your matchup ratings any time during the event — saved changes apply immediately, including to rounds already underway.</p>
+    <p class="note" style="margin-top:0;">Browse any opponent's roster and adjust your matchup ratings any time during the event — saved changes apply immediately, including to rounds already underway. Faction and disposition are editable here too, for your team and every opponent, in case someone forgot to fill theirs in on BCP.</p>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><h3>${esc(state.teamA.name)} — roster</h3></div>
+    ${state.teamA.players.map((p,i)=>rosterRowHTML('a', p, i, state.teamA.dispositions[i], state.teamA.factions[i], state.teamA.bcpLinks[i])).join('')}
   </div>
   <div class="panel">
     <div class="panel-title"><h3>${esc(state.teamA.name)} — generic disposition matrix</h3></div>
@@ -1236,7 +1320,7 @@ function eventMatchupsHTML(){
   </div>
   <div class="panel">
     <div class="panel-title"><h3>Opponent pool (${state.opponentTeams.length})</h3></div>
-    ${state.opponentTeams.length ? state.opponentTeams.map(o=>eventOpponentMatrixBlockHTML(state.teamA, o)).join('') : '<p class="note" style="margin-top:0;">This event has no opponent pool — it was set up with a single fixed opponent for the whole event.</p>'}
+    ${state.opponentTeams.length ? state.opponentTeams.map((o,oi)=>eventOpponentMatrixBlockHTML(state.teamA, o, oi)).join('') : '<p class="note" style="margin-top:0;">This event has no opponent pool — it was set up with a single fixed opponent for the whole event.</p>'}
   </div>`;
 }
 function playerListsHTML(i){
@@ -1267,6 +1351,9 @@ function workspaceHTML(){
   <div class="panel">
     <div class="panel-title"><h2>Team workspace</h2><span class="eyebrow">${esc(state.name || state.code)}</span></div>
     <p class="note" style="margin-top:0;">A shared space for your team — each player can jot down their list, notes, or reminders here, and upload versions of the list they're working on. It sticks around for the whole event, not just one round.${preSetup ? ' While you\'re still planning, this is also where you set up your roster and can import from BCP once lists are revealed.' : ''}</p>
+    <div class="btn-row" style="margin-top:10px;">
+      <button class="btn-ghost" data-action="export-roster">📄 export roster &amp; ratings (text)</button>
+    </div>
   </div>
   ${preSetup ? bcpImportPanelHTML(true) : ''}
   ${preSetup ? `<div class="panel">
@@ -1425,6 +1512,7 @@ function header(){
         ? (eventView==='setup' || eventView==='matchups' ? `<button class="btn-ghost" data-action="goto-workspace-presetup">📋 workspace</button>` : '')
         : `<button class="btn-ghost" data-action="toggle-workspace-view">${eventView==='workspace' ? '← back to round' : '📋 workspace'}</button>`}
       ${!preSetup ? `<button class="btn-ghost" data-action="toggle-history-view">${eventView==='history' ? '← back to current round' : '📜 round history'}</button>` : ''}
+      ${!preSetup ? `<button class="btn-ghost" data-action="toggle-results-view">${eventView==='results' ? '← back to current round' : '🏆 final results'}</button>` : ''}
       <button class="btn-ghost" data-action="copy-spectator-link">📺 spectator link</button>
       <button class="btn-ghost" data-action="go-home">🏠 all events</button>
     </div>
@@ -1559,6 +1647,7 @@ function landingHTML(){
     <div class="hud-brand"><span class="bracket">[</span> 8-MAN MATCHUP CONSOLE <span class="bracket">]</span></div>
     <div class="hud-meta">
       <button class="btn-ghost" data-action="refresh-index">⟳ refresh list</button>
+      <button class="btn-ghost" data-action="toggle-team-history">📊 team history</button>
       <button class="btn-ghost" data-action="logout">🔒 log out</button>
     </div>
   </div>
@@ -1582,6 +1671,46 @@ function landingHTML(){
   </div>`;
 }
 
+function teamHistoryHTML(){
+  const events = (indexCache.events||[]).filter(e=>e.record);
+  let totalW=0, totalL=0, totalD=0;
+  const headToHead = {};
+  events.forEach(e=>{
+    totalW += e.record.wins; totalL += e.record.losses; totalD += e.record.draws;
+    (e.roundResults||[]).forEach(rr=>{
+      if (!headToHead[rr.oppName]) headToHead[rr.oppName] = { w:0, l:0, d:0 };
+      if (rr.result==='Win') headToHead[rr.oppName].w++;
+      else if (rr.result==='Loss') headToHead[rr.oppName].l++;
+      else headToHead[rr.oppName].d++;
+    });
+  });
+  const oppNames = Object.keys(headToHead).sort();
+  return `
+  <div class="hud-header">
+    <div class="hud-brand"><span class="bracket">[</span> 8-MAN MATCHUP CONSOLE <span class="bracket">]</span></div>
+    <div class="hud-meta"><button class="btn-ghost" data-action="toggle-team-history">← back to events</button></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><h2>Team history</h2><span class="eyebrow">${events.length} EVENT${events.length!==1?'S':''} TRACKED</span></div>
+    <div class="standings-row"><span>Overall record</span><span class="mono">${totalW}W – ${totalL}L – ${totalD}D</span></div>
+    <p class="note" style="margin-top:8px;">Only counts events saved since this feature shipped — older events won't show a record here until they're opened and saved again.</p>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><h3>Events</h3></div>
+    ${events.length ? events.map(e=>`
+      <div class="pool-item" style="display:flex;align-items:center;gap:10px;">
+        <span style="flex:1;">${esc(e.name||e.code)}${e.eventComplete?' <span class="dim mono" style="font-size:10px;">(ended)</span>':''}</span>
+        <span class="mono dim" style="font-size:12px;">${e.record.wins}W-${e.record.losses}L-${e.record.draws}D</span>
+      </div>
+    `).join('') : '<p class="note" style="margin-top:0;">No events with a tracked record yet.</p>'}
+  </div>
+  <div class="panel">
+    <div class="panel-title"><h3>Head-to-head, by opponent</h3></div>
+    ${oppNames.length ? oppNames.map(name=>`
+      <div class="standings-row"><span>${esc(name)}</span><span class="mono">${headToHead[name].w}W – ${headToHead[name].l}L – ${headToHead[name].d}D</span></div>
+    `).join('') : '<p class="note" style="margin-top:0;">No opponent history recorded yet.</p>'}
+  </div>`;
+}
 function teamMatrixHTML(team){
   const opponents = (team.trackedOpponents || []).map(code => {
     const found = indexCache.teams.find(t=>t.code===code);
@@ -2507,6 +2636,8 @@ function afterChunkConfirmed(round){
 }
 
 /* ---------------- event handlers ---------------- */
+window.addEventListener('online', ()=>{ if (currentCode && state) saveState(); });
+
 app.addEventListener('click', async (e)=>{
   const el = e.target.closest('[data-action]');
   if (!el) return;
@@ -2610,7 +2741,7 @@ app.addEventListener('click', async (e)=>{
     teamProfile = null; teamProfileCode = null;
     mode = 'event';
     authView = 'login';
-    eventView = null; undoStack = []; bcpImportSummary = null; bcpImportPreview = null; viewingSnapshotRound = null; viewingSnapshotData = null; roundIndexCache = [];
+    eventView = null; hubView = null; undoStack = []; bcpImportSummary = null; bcpImportPreview = null; viewingSnapshotRound = null; viewingSnapshotData = null; roundIndexCache = [];
     route();
     return;
   }
@@ -2625,13 +2756,13 @@ app.addEventListener('click', async (e)=>{
     return;
   }
   if (action === 'go-home'){
-    try { await storage.delete(LAST_CODE_KEY, false); } catch(err){ /* non-fatal */ }
-    try { await storage.delete(LAST_TEAM_CODE_KEY, false); } catch(err){ /* non-fatal */ }
+    try { await window.storage.delete(LAST_CODE_KEY, false); } catch(err){ /* non-fatal */ }
+    try { await window.storage.delete(LAST_TEAM_CODE_KEY, false); } catch(err){ /* non-fatal */ }
     stopLiveSync();
     state = null; currentCode = null;
     teamProfile = null; teamProfileCode = null;
     mode = 'event';
-    eventView = null; undoStack = []; bcpImportSummary = null; bcpImportPreview = null; viewingSnapshotRound = null; viewingSnapshotData = null; roundIndexCache = [];
+    eventView = null; hubView = null; undoStack = []; bcpImportSummary = null; bcpImportPreview = null; viewingSnapshotRound = null; viewingSnapshotData = null; roundIndexCache = [];
     await refreshIndex();
     route();
     return;
@@ -2670,7 +2801,7 @@ app.addEventListener('click', async (e)=>{
     state = ev;
     currentCode = code;
     mode = 'event';
-    eventView = null; undoStack = []; bcpImportSummary = null; bcpImportPreview = null; viewingSnapshotRound = null; viewingSnapshotData = null; roundIndexCache = [];
+    eventView = null; hubView = null; undoStack = []; bcpImportSummary = null; bcpImportPreview = null; viewingSnapshotRound = null; viewingSnapshotData = null; roundIndexCache = [];
     await saveState();
     startLiveSync(code);
     await persistLastCode();
@@ -2739,7 +2870,7 @@ app.addEventListener('click', async (e)=>{
     state.name = eventName;
     currentCode = code;
     mode = 'event';
-    eventView = null; undoStack = []; bcpImportSummary = null; bcpImportPreview = null; viewingSnapshotRound = null; viewingSnapshotData = null; roundIndexCache = [];
+    eventView = null; hubView = null; undoStack = []; bcpImportSummary = null; bcpImportPreview = null; viewingSnapshotRound = null; viewingSnapshotData = null; roundIndexCache = [];
     await saveState();
     startLiveSync(code);
     await persistLastCode();
@@ -2755,14 +2886,14 @@ app.addEventListener('click', async (e)=>{
   }
   if (action === 'pick-event'){
     const found = await tryLoad(el.dataset.code);
-    if (found){ mode = 'event'; eventView = null; undoStack = []; bcpImportSummary = null; bcpImportPreview = null; viewingSnapshotRound = null; viewingSnapshotData = null; roundIndexCache = []; await persistLastCode(); await refreshIndex(); }
+    if (found){ mode = 'event'; eventView = null; hubView = null; undoStack = []; bcpImportSummary = null; bcpImportPreview = null; viewingSnapshotRound = null; viewingSnapshotData = null; roundIndexCache = []; await persistLastCode(); await refreshIndex(); }
     route();
     return;
   }
   if (action === 'delete-team'){
     const code = el.dataset.code, name = el.dataset.name;
     if (!window.confirm(`Delete team profile "${name}" (${code})? This can't be undone.`)) return;
-    try { await storage.delete(TEAM_PREFIX+code, true); } catch(err){ /* non-fatal */ }
+    try { await window.storage.delete(TEAM_PREFIX+code, true); } catch(err){ /* non-fatal */ }
     await removeIndexEntry('teams', code);
     if (teamProfileCode === code){ teamProfile = null; teamProfileCode = null; }
     route();
@@ -2812,7 +2943,7 @@ app.addEventListener('click', async (e)=>{
   if (action === 'delete-event'){
     const code = el.dataset.code, name = el.dataset.name;
     if (!window.confirm(`Delete event "${name}" (${code})? This can't be undone.`)) return;
-    try { await storage.delete(STORAGE_PREFIX+code, true); } catch(err){ /* non-fatal */ }
+    try { await window.storage.delete(STORAGE_PREFIX+code, true); } catch(err){ /* non-fatal */ }
     await removeIndexEntry('events', code);
     if (currentCode === code){ state = null; currentCode = null; }
     route();
@@ -2833,7 +2964,7 @@ app.addEventListener('click', async (e)=>{
     if (!window.confirm(`Delete ${codes.length} ${noun}${codes.length!==1?'s':''}? This can't be undone.`)) return;
     const prefix = list === 'teams' ? TEAM_PREFIX : STORAGE_PREFIX;
     for (const code of codes){
-      try { await storage.delete(prefix+code, true); } catch(err){ /* non-fatal, keep going */ }
+      try { await window.storage.delete(prefix+code, true); } catch(err){ /* non-fatal, keep going */ }
       await removeIndexEntry(list, code);
       if (list === 'teams' && teamProfileCode === code){ teamProfile = null; teamProfileCode = null; }
       if (list === 'events' && currentCode === code){ state = null; currentCode = null; }
@@ -2851,7 +2982,7 @@ app.addEventListener('click', async (e)=>{
     const found = await tryLoad(code);
     if (!found){ if (errEl) errEl.textContent = `No event found for code ${code.toUpperCase()}.`; return; }
     mode = 'event';
-    eventView = null; undoStack = []; bcpImportSummary = null; bcpImportPreview = null; viewingSnapshotRound = null; viewingSnapshotData = null; roundIndexCache = [];
+    eventView = null; hubView = null; undoStack = []; bcpImportSummary = null; bcpImportPreview = null; viewingSnapshotRound = null; viewingSnapshotData = null; roundIndexCache = [];
     await persistLastCode();
     route();
     return;
@@ -2859,7 +2990,7 @@ app.addEventListener('click', async (e)=>{
   if (action === 'refresh'){
     if (currentCode){
       try{
-        const res = await storage.get(STORAGE_PREFIX+currentCode, true);
+        const res = await window.storage.get(STORAGE_PREFIX+currentCode, true);
         if (res && res.value){ state = JSON.parse(res.value); migrateState(); lastWrittenJson = res.value; }
       }catch(err){ /* ignore */ }
     }
@@ -2884,6 +3015,18 @@ app.addEventListener('click', async (e)=>{
     route();
     return;
   }
+  if (action === 'export-roster'){
+    const text = buildRosterExportText();
+    const filename = `${(state.name||state.code).replace(/[^a-z0-9]+/gi,'-')}-roster.txt`;
+    downloadTextFile(filename, text);
+    return;
+  }
+  if (action === 'toggle-team-history'){
+    hubView = hubView === 'history' ? null : 'history';
+    if (hubView === 'history') await refreshIndex();
+    route();
+    return;
+  }
   if (action === 'toggle-history-view'){
     if (eventView === 'history'){
       eventView = null;
@@ -2895,6 +3038,24 @@ app.addEventListener('click', async (e)=>{
       viewingSnapshotData = null;
       roundIndexCache = await loadRoundIndex();
     }
+    route();
+    return;
+  }
+  if (action === 'toggle-results-view'){
+    eventView = eventView === 'results' ? null : 'results';
+    route();
+    return;
+  }
+  if (action === 'end-event'){
+    if (!window.confirm('End this event? You can still reopen it later if you need to change anything.')) return;
+    state.eventComplete = true;
+    scheduleSave();
+    route();
+    return;
+  }
+  if (action === 'reopen-event'){
+    state.eventComplete = false;
+    scheduleSave();
     route();
     return;
   }
@@ -2961,7 +3122,7 @@ app.addEventListener('click', async (e)=>{
   if (action === 'refresh-profile'){
     if (teamProfileCode){
       try{
-        const res = await storage.get(TEAM_PREFIX+teamProfileCode, true);
+        const res = await window.storage.get(TEAM_PREFIX+teamProfileCode, true);
         if (res && res.value){ teamProfile = JSON.parse(res.value); migrateTeamProfile(); }
       }catch(err){ /* ignore */ }
     }
@@ -2974,7 +3135,7 @@ app.addEventListener('click', async (e)=>{
     mode = 'team';
     if (!teamProfile){
       try {
-        const last = await storage.get(LAST_TEAM_CODE_KEY, false);
+        const last = await window.storage.get(LAST_TEAM_CODE_KEY, false);
         if (last && last.value){
           const code = JSON.parse(last.value).code;
           await tryLoadTeamProfile(code);
@@ -3036,7 +3197,7 @@ app.addEventListener('click', async (e)=>{
     const code = (codeInput ? codeInput.value : '').trim().toUpperCase();
     if (!code){ if (errEl) errEl.textContent = 'Choose or enter a team profile first.'; return; }
     try {
-      const res = await storage.get(TEAM_PREFIX+code, true);
+      const res = await window.storage.get(TEAM_PREFIX+code, true);
       if (res && res.value){
         const profile = JSON.parse(res.value);
         const target = el.dataset.target === 'A' ? state.teamA : state.teamB;
@@ -3087,6 +3248,7 @@ app.addEventListener('click', async (e)=>{
     round1.oppName = state.teamB.name;
     scheduleSave();
     route();
+    saveRoundSnapshot(1);
     return;
   }
   if (action === 'pick-first-opponent'){
@@ -3217,6 +3379,7 @@ app.addEventListener('click', async (e)=>{
     state.rounds.push(newRound(num, state.teamA.players, state.teamB.players, state.teamB.name));
     state.currentRound = state.rounds.length - 1;
     scheduleSave(); route();
+    saveRoundSnapshot(num);
     return;
   }
   if (action === 'next-round-with-opponent'){
@@ -3236,6 +3399,7 @@ app.addEventListener('click', async (e)=>{
     state.rounds.push(newRound(num, state.teamA.players, state.teamB.players, opp.name));
     state.currentRound = state.rounds.length - 1;
     scheduleSave(); route();
+    saveRoundSnapshot(num);
     return;
   }
 });
@@ -3285,7 +3449,13 @@ app.addEventListener('change', async (e)=>{
   }
   if (el.dataset.action === 'set-disposition'){
     const side = el.dataset.side, idx = parseInt(el.dataset.idx);
-    const team = side==='p' ? teamProfile : (side==='a' ? state.teamA : state.teamB);
+    let team;
+    if (side==='p') team = teamProfile;
+    else if (side==='a') team = state.teamA;
+    else if (side==='b') team = state.teamB;
+    else if (side==='opp') team = state.opponentTeams[parseInt(el.dataset.oppIdx)];
+    if (!team) return;
+    if (!team.dispositions) team.dispositions = defaultDispositions();
     team.dispositions[idx] = el.value;
     if (side==='p') scheduleSaveProfile(); else scheduleSave();
     route();
@@ -3295,8 +3465,11 @@ app.addEventListener('change', async (e)=>{
     const side = el.dataset.side, idx = parseInt(el.dataset.idx), disp = el.dataset.disp;
     const team = side==='p' ? teamProfile : (side==='a' ? state.teamA : state.teamB);
     if (!team.matchupRatings[idx]) team.matchupRatings[idx] = {};
-    team.matchupRatings[idx][disp] = el.value ? parseFloat(el.value) : null;
-    if (side==='p') scheduleSaveProfile(); else scheduleSave();
+    const val = el.value ? parseFloat(el.value) : null;
+    team.matchupRatings[idx][disp] = val;
+    if (side==='p') scheduleSaveProfile();
+    else if (side==='a' && currentCode) saveRatingCell(ratingsKey(currentCode), idx, disp, val);
+    else scheduleSave();
     route();
     return;
   }
@@ -3311,12 +3484,13 @@ app.addEventListener('change', async (e)=>{
     return;
   }
   if (el.dataset.action === 'set-event-team-matchup'){
-    if (!state) return;
+    if (!state || !currentCode) return;
     const idx = parseInt(el.dataset.idx), key = el.dataset.opponent;
     if (!state.teamA.teamMatchupRatings) state.teamA.teamMatchupRatings = blankMatchupRatings();
     if (!state.teamA.teamMatchupRatings[idx]) state.teamA.teamMatchupRatings[idx] = {};
-    state.teamA.teamMatchupRatings[idx][key] = el.value ? parseFloat(el.value) : null;
-    scheduleSave();
+    const val = el.value ? parseFloat(el.value) : null;
+    state.teamA.teamMatchupRatings[idx][key] = val;
+    saveRatingCell(teamRatingsKey(currentCode), idx, key, val);
     route();
     return;
   }
@@ -3365,20 +3539,10 @@ app.addEventListener('keydown', (e)=>{
 });
 
 /* ---------------- boot ---------------- */
-function notConfiguredHTML(){
-  return `
-  <div class="hud-header"><div class="hud-brand"><span class="bracket">[</span> 8-MAN MATCHUP CONSOLE <span class="bracket">]</span></div></div>
-  <div class="panel landing-card">
-    <div class="eyebrow" style="color:var(--warn);">SETUP NEEDED</div>
-    <h2>Firebase isn't configured yet</h2>
-    <p class="dim" style="font-size:13px;">This page can't save or sync anything until it's connected to a Firebase project. Open this file's source, find the <code>firebaseConfig</code> object near the top of the script, and paste in your own project's values (Firebase console → Project settings → Your apps). Full steps are in the comment right above it.</p>
-    <p class="note">Once that's filled in, reload this page.</p>
-  </div>`;
-}
 async function attemptAutoLoad(){
   await refreshIndex();
   try {
-    const last = await storage.get(LAST_CODE_KEY, false);
+    const last = await window.storage.get(LAST_CODE_KEY, false);
     if (last && last.value){
       const code = JSON.parse(last.value).code;
       const found = await tryLoad(code);
@@ -3387,7 +3551,6 @@ async function attemptAutoLoad(){
   } catch(e){ /* fall through to hub */ }
 }
 (async function init(){
-  if (!firebaseReady){ app.innerHTML = notConfiguredHTML(); return; }
   const urlParams = new URLSearchParams(window.location.search);
   const spectateParam = urlParams.get('spectate');
   if (spectateParam){
