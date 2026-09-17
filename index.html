@@ -647,6 +647,9 @@ let remoteApplyBlocked = false; // true while a local edit hasn't finished savin
 let pendingRemoteValue = null; // a remote update that arrived while blocked, applied once the local save clears
 let lastWrittenJson = null; // the last value WE wrote, so our own save doesn't bounce back as a "remote" update
 let liveEventRef = null; // the active Firebase ref being listened to, if any
+let liveGenRatingsRef = null; // live listener on the generic disposition ratings key
+let liveTeamRatingsRef = null; // live listener on the team-specific ratings key
+const lastWrittenRatingsJson = {}; // keyed by storage key, so our own rating saves don't bounce back as "remote" updates
 let viewingSnapshotRound = null; // round number currently shown in the history detail view, if any
 let viewingSnapshotData = null; // the loaded snapshot state for that round
 let roundIndexCache = []; // list of round numbers that have a saved snapshot, refreshed when the history view opens
@@ -700,6 +703,17 @@ async function applyRemoteUpdate(json){
     route();
   } catch(e){ /* ignore a malformed push */ }
 }
+function applyRemoteRatingsUpdate(kind, key, json){
+  if (lastWrittenRatingsJson[key] === json) return; // echo of our own write
+  if (!state || !state.teamA || mode !== 'event') return;
+  try {
+    const arr = JSON.parse(json);
+    if (kind === 'gen') state.teamA.matchupRatings = arr;
+    else state.teamA.teamMatchupRatings = arr;
+    lastWrittenRatingsJson[key] = json;
+    route();
+  } catch(e){ /* ignore a malformed push */ }
+}
 function startLiveSync(code){
   stopLiveSync();
   if (typeof fbDb === 'undefined' || !fbDb) return; // no live Firebase connection available in this build
@@ -709,9 +723,23 @@ function startLiveSync(code){
     if (!snap.exists()) return;
     applyRemoteUpdate(snap.val());
   });
+  const genKey = sanitizeKey(ratingsKey(code));
+  liveGenRatingsRef = fbDb.ref(genKey);
+  liveGenRatingsRef.on('value', (snap)=>{
+    if (!snap.exists()) return;
+    applyRemoteRatingsUpdate('gen', ratingsKey(code), snap.val());
+  });
+  const teamKey = sanitizeKey(teamRatingsKey(code));
+  liveTeamRatingsRef = fbDb.ref(teamKey);
+  liveTeamRatingsRef.on('value', (snap)=>{
+    if (!snap.exists()) return;
+    applyRemoteRatingsUpdate('team', teamRatingsKey(code), snap.val());
+  });
 }
 function stopLiveSync(){
   if (liveEventRef){ liveEventRef.off(); liveEventRef = null; }
+  if (liveGenRatingsRef){ liveGenRatingsRef.off(); liveGenRatingsRef = null; }
+  if (liveTeamRatingsRef){ liveTeamRatingsRef.off(); liveTeamRatingsRef = null; }
 }
 function bcpEligiblePlayers(team){
   if (team.excludeIdx == null) return team.players;
@@ -762,7 +790,9 @@ async function saveRatingCell(key, idx, field, value){
   while (arr.length <= idx) arr.push({});
   if (!arr[idx]) arr[idx] = {};
   arr[idx][field] = value;
-  await storage.set(key, JSON.stringify(arr), true);
+  const json = JSON.stringify(arr);
+  lastWrittenRatingsJson[key] = json;
+  await storage.set(key, json, true);
   return arr;
 }
 async function mergeLatestRatings(){
